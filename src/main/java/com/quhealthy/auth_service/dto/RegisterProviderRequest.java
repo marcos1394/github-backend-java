@@ -11,8 +11,8 @@ public class RegisterProviderRequest {
     @NotBlank(message = "El nombre es obligatorio")
     private String name;
 
-    @Email(message = "El formato del correo es inválido")
     @NotBlank(message = "El correo es obligatorio")
+    @Email(message = "Formato de correo inválido")
     private String email;
 
     @NotBlank(message = "El teléfono es obligatorio")
@@ -22,8 +22,8 @@ public class RegisterProviderRequest {
     @Size(min = 6, message = "La contraseña debe tener al menos 6 caracteres")
     private String password;
 
-    @NotBlank(message = "El tipo de servicio es obligatorio")
-    private String serviceType; // 'health' o 'beauty'
+    @NotBlank(message = "El tipo de servicio es obligatorio (health/beauty)")
+    private String serviceType;
 
     private boolean acceptTerms;
 

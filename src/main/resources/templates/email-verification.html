@@ -2,53 +2,48 @@
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
-    <title>Verificación de Cuenta</title>
-    <style>
-        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f4f7; color: #51545E; margin: 0; padding: 0; }
-        .email-wrapper { width: 100%; margin: 0; padding: 0; background-color: #f4f4f7; }
-        .email-content { width: 100%; max-width: 600px; margin: 0 auto; padding: 20px; }
-        .email-body { width: 100%; margin: 0; padding: 0; background-color: #FFFFFF; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .email-body_inner { padding: 40px; }
-        h1 { margin-top: 0; color: #333333; font-size: 24px; font-weight: bold; text-align: left; }
-        p { font-size: 16px; line-height: 1.625; color: #51545E; margin: .4em 0 1.1875em; }
-        .button { background-color: #7c3aed; border-radius: 4px; color: #ffffff; display: inline-block; font-size: 16px; font-weight: bold; line-height: 50px; text-align: center; text-decoration: none; width: 200px; -webkit-text-size-adjust: none; }
-        .footer { text-align: center; margin-top: 20px; color: #6b6e76; font-size: 12px; }
-    </style>
+    <title>Verifica tu cuenta - QuHealthy</title>
 </head>
-<body>
-    <table class="email-wrapper" width="100%" cellpadding="0" cellspacing="0" role="presentation">
+<body style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f4f7; color: #51545E; margin: 0; padding: 0;">
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background-color: #f4f4f7; padding: 40px 0;">
         <tr>
             <td align="center">
-                <div class="email-content">
-                    <table class="email-body" width="100%" cellpadding="0" cellspacing="0" role="presentation">
-                        <tr>
-                            <td class="email-body_inner">
-                                <div style="text-align: center; margin-bottom: 20px;">
-                                    <span style="font-size: 24px; font-weight: bold; color: #7c3aed;">QuHealthy</span>
-                                </div>
-                                
-                                <h1>Hola, <span th:text="${name}">Usuario</span>! 👋</h1>
-                                
-                                <p>Gracias por unirte a la plataforma líder para profesionales de la salud. Para activar tu cuenta y comenzar a configurar tu perfil, por favor verifica tu correo electrónico.</p>
-                                
-                                <table width="100%" border="0" cellspacing="0" cellpadding="0">
-                                    <tr>
-                                        <td align="center" style="padding: 20px 0;">
-                                            <a th:href="${link}" class="button" target="_blank">Verificar mi Cuenta</a>
-                                        </td>
-                                    </tr>
-                                </table>
-                                
-                                <p>Si no creaste esta cuenta, puedes ignorar este mensaje de forma segura.</p>
-                                
-                                <p>Saludos,<br>El equipo de QuHealthy</p>
-                            </td>
-                        </tr>
-                    </table>
-                    <div class="footer">
-                        <p>&copy; 2026 QuHealthy Inc. Todos los derechos reservados.</p>
-                    </div>
-                </div>
+                <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                    <tr>
+                        <td style="padding: 30px; text-align: center; background-color: #7c3aed;">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 24px;">QuHealthy</h1>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 40px;">
+                            <h2 style="margin-top: 0; color: #333;">Hola, <span th:text="${name}">Usuario</span> 👋</h2>
+                            <p style="font-size: 16px; line-height: 1.6; color: #555;">
+                                Gracias por registrarte en QuHealthy. Para garantizar la seguridad de tus datos y completar tu registro, necesitamos verificar tu dirección de correo electrónico.
+                            </p>
+                            
+                            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                                <tr>
+                                    <td align="center" style="padding: 30px 0;">
+                                        <a th:href="${link}" target="_blank" style="background-color: #7c3aed; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px; display: inline-block;">Verificar Correo Electrónico</a>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <p style="font-size: 14px; color: #777;">
+                                O copia y pega este enlace en tu navegador:<br>
+                                <a th:href="${link}" th:text="${link}" style="color: #7c3aed; word-break: break-all;">https://quhealthy.com/verify...</a>
+                            </p>
+                            
+                            <p style="font-size: 14px; color: #999; margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
+                                Este enlace expirará en 24 horas. Si no creaste esta cuenta, ignora este mensaje.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+                <p style="text-align: center; font-size: 12px; color: #999; margin-top: 20px;">
+                    &copy; 2026 QuHealthy Inc. Ciudad de México.<br>
+                    <a href="#" style="color: #999; text-decoration: underline;">Términos</a> | <a href="#" style="color: #999; text-decoration: underline;">Privacidad</a>
+                </p>
             </td>
         </tr>
     </table>
