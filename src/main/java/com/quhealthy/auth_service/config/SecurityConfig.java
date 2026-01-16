@@ -38,6 +38,7 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 // Permitir todo lo que empiece con /api/auth/ sin login
                 .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/ws/**").permitAll() // <--- AGREGA ESTO
                 // Permitir Swagger/OpenAPI si lo agregamos después
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**").permitAll()
                 // Todo lo demás requiere autenticación

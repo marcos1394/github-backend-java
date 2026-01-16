@@ -5,6 +5,11 @@
     pkgs.jdk21
     pkgs.maven
   ];
+
+  env = {
+    JAVA_HOME = "${pkgs.jdk21}/lib/openjdk";
+  };
+
   idx = {
     extensions = [
       "vscjava.vscode-java-pack"

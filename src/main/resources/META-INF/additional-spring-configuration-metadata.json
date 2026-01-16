@@ -1,0 +1,122 @@
+{"properties": [
+  {
+    "name": "\nspring.application.nam",
+    "type": "java.lang.String",
+    "description": "A description for '\nspring.application.nam'"
+  },
+  {
+    "name": "\nserver.por",
+    "type": "java.lang.String",
+    "description": "A description for '\nserver.por'"
+  },
+  {
+    "name": "=\nspring.datasource.u",
+    "type": "java.lang.String",
+    "description": "A description for '=\nspring.datasource.u'"
+  },
+  {
+    "name": "}\nspring.datasource.passwo",
+    "type": "java.lang.String",
+    "description": "A description for '}\nspring.datasource.passwo'"
+  },
+  {
+    "name": "}\nspring.datasource.userna",
+    "type": "java.lang.String",
+    "description": "A description for '}\nspring.datasource.userna'"
+  },
+  {
+    "name": ")\nspring.datasource.hikari.max-lifeti",
+    "type": "java.lang.String",
+    "description": "A description for ')\nspring.datasource.hikari.max-lifeti'"
+  },
+  {
+    "name": "}\nspring.datasource.driver-class-na",
+    "type": "java.lang.String",
+    "description": "A description for '}\nspring.datasource.driver-class-na'"
+  },
+  {
+    "name": "n\nspring.datasource.hikari.connection-timeo",
+    "type": "java.lang.String",
+    "description": "A description for 'n\nspring.datasource.hikari.connection-timeo'"
+  },
+  {
+    "name": "s\nspring.datasource.hikari.minimum-id",
+    "type": "java.lang.String",
+    "description": "A description for 's\nspring.datasource.hikari.minimum-id'"
+  },
+  {
+    "name": ")\nspring.datasource.hikari.maximum-pool-si",
+    "type": "java.lang.String",
+    "description": "A description for ')\nspring.datasource.hikari.maximum-pool-si'"
+  },
+  {
+    "name": "l.\nspring.jpa.hibernate.ddl-a",
+    "type": "java.lang.String",
+    "description": "A description for 'l.\nspring.jpa.hibernate.ddl-a'"
+  },
+  {
+    "name": "ct\nspring.jpa.properties.hibernate.format_",
+    "type": "java.lang.String",
+    "description": "A description for 'ct\nspring.jpa.properties.hibernate.format_'"
+  },
+  {
+    "name": "ct\nspring.jpa.properties.hibernate.format_",
+    "type": "java.lang.String",
+    "description": "A description for 'ct\nspring.jpa.properties.hibernate.format_'"
+  },
+  {
+    "name": "e}\nspring.jpa.properties.hibernate.dial",
+    "type": "java.lang.String",
+    "description": "A description for 'e}\nspring.jpa.properties.hibernate.dial'"
+  },
+  {
+    "name": "e}\nspring.jpa.show-",
+    "type": "java.lang.String",
+    "description": "A description for 'e}\nspring.jpa.show-'"
+  },
+  {
+    "name": "od)\njwt.se",
+    "type": "java.lang.String",
+    "description": "A description for 'od)\njwt.se'"
+  },
+  {
+    "name": "4h)\njwt.expira",
+    "type": "java.lang.String",
+    "description": "A description for '4h)\njwt.expira'"
+  },
+  {
+    "name": "====\nresend.ap",
+    "type": "java.lang.String",
+    "description": "A description for '====\nresend.ap'"
+  },
+  {
+    "name": "EY:}\ntwilio.accoun",
+    "type": "java.lang.String",
+    "description": "A description for 'EY:}\ntwilio.accoun'"
+  },
+  {
+    "name": "ID:}\ntwilio.auth.",
+    "type": "java.lang.String",
+    "description": "A description for 'ID:}\ntwilio.auth.'"
+  },
+  {
+    "name": "EN:}\ntwilio.phone.n",
+    "type": "java.lang.String",
+    "description": "A description for 'EN:}\ntwilio.phone.n'"
+  },
+  {
+    "name": "reos\napp.fronten",
+    "type": "java.lang.String",
+    "description": "A description for 'reos\napp.fronten'"
+  },
+  {
+    "name": "=====\nmanagement.endpoints.web.exposure.i",
+    "type": "java.lang.String",
+    "description": "A description for '=====\nmanagement.endpoints.web.exposure.i'"
+  },
+  {
+    "name": "trics\nmanagement.endpoint.health.show-d",
+    "type": "java.lang.String",
+    "description": "A description for 'trics\nmanagement.endpoint.health.show-d'"
+  }
+]}
