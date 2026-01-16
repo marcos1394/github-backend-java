@@ -1,0 +1,98 @@
+name: QuHealthy Enterprise Pipeline 🏥🚀
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: us-central1
+  REPO_NAME: quhealthy-repo
+  SERVICE_NAME: auth-service
+
+jobs:
+  # ========================================================================
+  # JOB 1: CALIDAD Y SEGURIDAD (SonarCloud)
+  # ========================================================================
+  sonar-analysis:
+    name: Code Quality & Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Vital para análisis histórico
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      # Analiza código y envía a SonarCloud
+      - name: Build and Analyze
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          mvn -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+          -Dsonar.projectKey=marcos1394_github-backend-java \
+          -Dsonar.organization=marcos1394 \
+          -Dsonar.host.url=https://sonarcloud.io
+  # ========================================================================
+  # JOB 2: BUILD & DEPLOY (Solo si pasa calidad)
+  # ========================================================================
+  deploy:
+    needs: sonar-analysis
+    if: github.ref == 'refs/heads/main' # Solo despliega si es la rama main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write' # ⚠️ CRÍTICO: Necesario para la autenticación WIF
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. Autenticación Enterprise (Workload Identity Federation)
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: '${{ secrets.GCP_WIF_PROVIDER }}'
+          service_account: '${{ secrets.GCP_SA_EMAIL }}'
+
+      # 2. Configurar SDK de Google
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # 3. Configurar Docker para Artifact Registry
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+
+      # 4. Construir y Subir Imagen (Build & Push)
+      - name: Build and Push Container
+        run: |
+          IMAGE_URI=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+
+      # 5. Despliegue a Cloud Run
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          region: ${{ env.REGION }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+          # NOTA: Las variables de entorno (DB, JWT, etc.) se configuran en la consola de GCP
+          # para no exponerlas aquí, o se pueden inyectar como secretos si prefieres.
+          env_vars: |
+            SPRING_PROFILES_ACTIVE=prod
