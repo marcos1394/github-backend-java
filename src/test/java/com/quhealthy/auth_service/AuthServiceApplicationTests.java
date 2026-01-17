@@ -8,19 +8,26 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName; // <--- Importante
 
 @SpringBootTest
 @Testcontainers // 1. Habilita el soporte para contenedores
 @ActiveProfiles("test")
 class AuthServiceApplicationTests {
 
-    // 2. Definimos el contenedor. USAMOS LA IMAGEN DE POSTGIS, NO LA DE POSTGRES NORMAL.
-    // Esto es vital para que soporte 'geography(Point,4326)'
+    // DEFINICIÓN DEL CONTENEDOR CORREGIDA 🛠️
+    // 1. Usamos DockerImageName.parse(...) para definir la imagen.
+    // 2. Agregamos .asCompatibleSubstituteFor("postgres") para decirle a Testcontainers
+    //    que PostGIS es un Postgres válido y quitar el error.
+    @SuppressWarnings("resource")
     @Container
-    static PostgreSQLContainer<?> postgis = new PostgreSQLContainer<>("postgis/postgis:15-3.3")
-            .withDatabaseName("testdb")
-            .withUsername("test")
-            .withPassword("test");
+    static PostgreSQLContainer<?> postgis = new PostgreSQLContainer<>(
+            DockerImageName.parse("postgis/postgis:15-3.3")
+                .asCompatibleSubstituteFor("postgres")
+    )
+    .withDatabaseName("testdb")
+    .withUsername("test")
+    .withPassword("test");
 
     // 3. Inyectamos la URL dinámica del contenedor a Spring Boot
     // (Sobrescribe lo que tengas en application.properties)
