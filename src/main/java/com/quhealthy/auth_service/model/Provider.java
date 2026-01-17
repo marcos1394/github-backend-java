@@ -6,9 +6,12 @@ import com.quhealthy.auth_service.model.enums.Role;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import org.locationtech.jts.geom.Point; // Requiere hibernate-spatial
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
 
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -34,12 +37,11 @@ public class Provider extends BaseUser {
     private Double lng;
 
     // Coordenadas Espaciales (PostGIS) - Nivel PRO
+    // Nota: Asegúrate de que la BD tenga la extensión PostGIS activada
     @Column(columnDefinition = "geography(Point,4326)")
     private Point location;
 
     // --- Categorización (IDs o Relaciones) ---
-    // En microservicios puros, a veces guardamos solo el ID si la categoría vive en otro servicio.
-    // Si es un monolito modular, usamos @ManyToOne. Asumiré IDs por ahora para migración directa.
     @Column(name = "parent_category_id", nullable = false)
     private Long parentCategoryId;
 
@@ -96,9 +98,18 @@ public class Provider extends BaseUser {
     @Column(name = "referred_by_id")
     private Integer referredById;
 
-    // --- Relaciones ---
-    // Aquí irían tus @OneToMany para planes, kyc, reviews, etc.
-    // Ejemplo:
-    // @OneToMany(mappedBy = "provider")
-    // private List<ProviderPlan> subscriptions;
+    // --- RELACIONES (LA SOLUCIÓN AL ERROR DEL PIPELINE) ---
+    
+    // Esta es la variable que Hibernate estaba buscando y no encontraba.
+    // El nombre 'tags' debe coincidir con mappedBy="tags" en la clase Tag.
+    @ManyToMany(cascade = {CascadeType.PERSIST, CascadeType.MERGE})
+    @JoinTable(
+        name = "provider_tags",
+        joinColumns = @JoinColumn(name = "provider_id"),
+        inverseJoinColumns = @JoinColumn(name = "tag_id")
+    )
+    @ToString.Exclude // IMPORTANTE: Previene bucles infinitos en logs
+    @EqualsAndHashCode.Exclude // IMPORTANTE: Previene bucles infinitos en comparaciones
+    private Set<Tag> tags = new HashSet<>();
+
 }
