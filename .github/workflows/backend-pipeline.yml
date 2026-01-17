@@ -37,6 +37,16 @@ jobs:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
+      
+      - name: Show Test Failure Logs
+        if: failure()  # Solo se ejecuta si el paso anterior falló
+        run: |
+          echo "================================================================"
+          echo "🔎 REPORTE FORENSE DE ERRORES (SUREFIRE)"
+          echo "================================================================"
+          # Busca todos los reportes de texto y los imprime en consola
+          find target/surefire-reports -name "*.txt" -exec cat {} +
+          echo "================================================
 
       # Analiza código y envía a SonarCloud
       - name: Build and Analyze
