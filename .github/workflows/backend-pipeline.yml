@@ -96,14 +96,26 @@ jobs:
           docker build -t $IMAGE_URI .
           docker push $IMAGE_URI
 
-      # 5. Despliegue a Cloud Run
       - name: Deploy to Cloud Run
         uses: google-github-actions/deploy-cloudrun@v2
         with:
-          service: ${{ env.SERVICE_NAME }}
-          region: ${{ env.REGION }}
-          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
-          # NOTA: Las variables de entorno (DB, JWT, etc.) se configuran en la consola de GCP
-          # para no exponerlas aquí, o se pueden inyectar como secretos si prefieres.
+          service: auth-service
+          region: us-central1
+          image: us-central1-docker.pkg.dev/quhealthy-backend/quhealthy-repo/auth-service:${{ github.sha }}
+          
+          # 1. Variables de Entorno Públicas (Solo configuración)
           env_vars: |
             SPRING_PROFILES_ACTIVE=prod
+            
+          # 2. Secretos de Google Secret Manager (Inyección segura al arrancar)
+          # Formato: VARIABLE_ENTORNO_JAVA=NOMBRE_SECRETO_GCP:VERSION
+          secrets: |
+            DB_URL=application_db_url:latest
+            DB_USER=application_db_user:latest
+            DB_PASSWORD=application_db_password:latest
+            JWT_SECRET=application_jwt_secret:latest
+            STRIPE_API_KEY=application_stripe_key:latest
+            RESEND_API_KEY=application_resend_key:latest
+            TWILIO_SID=application_twilio_sid:latest
+            TWILIO_TOKEN=application_twilio_token:latest
+            TWILIO_PHONE_NUMBER=application_twilio_phone:latest
