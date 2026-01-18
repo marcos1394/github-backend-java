@@ -5,6 +5,7 @@ import com.quhealthy.auth_service.dto.LoginRequest;
 import com.quhealthy.auth_service.dto.ProviderStatusResponse;
 import com.quhealthy.auth_service.dto.RegisterProviderRequest;
 import com.quhealthy.auth_service.model.Provider;
+import com.quhealthy.auth_service.dto.ResendVerificationRequest;
 import com.quhealthy.auth_service.service.AuthService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -53,7 +54,7 @@ public class AuthController {
     }
 
     /**
-     * Endpoint para Verificar Email (El link del correo apunta aquí o al frontend que llama aquí).
+     * Endpoint para Verificar Email.
      * GET /api/auth/verify-email?token=xyz
      */
     @GetMapping("/verify-email")
@@ -73,9 +74,8 @@ public class AuthController {
         }
     }    
 
-
     /**
-     * Endpoint de prueba para verificar que el servidor responde (Health Check).
+     * Endpoint de prueba (Health Check).
      */
     @GetMapping("/ping")
     public ResponseEntity<Map<String, String>> ping() {
@@ -96,8 +96,6 @@ public class AuthController {
             return ResponseEntity.ok(response);
             
         } catch (IllegalArgumentException e) {
-            // Manejo elegante de errores (401 Unauthorized o 400 Bad Request)
-            // Para login, 401 suele ser más semántico si falla el password
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
                 AuthResponse.builder()
                     .message(e.getMessage())
@@ -112,7 +110,6 @@ public class AuthController {
      */
     @PostMapping("/forgot-password")
     public ResponseEntity<?> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
-        // Siempre devolvemos OK para no revelar qué correos existen (Seguridad)
         authService.requestPasswordReset(request);
         
         return ResponseEntity.ok(Map.of(
@@ -141,7 +138,6 @@ public class AuthController {
         }
     }
 
-
     /**
      * Endpoint Crítico: Obtener el contexto del usuario actual.
      * GET /api/auth/me
@@ -149,33 +145,49 @@ public class AuthController {
      */
     @GetMapping("/me")
     public ResponseEntity<ProviderStatusResponse> getCurrentUser() {
-        // 1. Obtener autenticación del contexto de seguridad (puesto por el Filtro JWT)
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         
-        // 2. Validar que no sea anónimo
         if (authentication == null || !authentication.isAuthenticated() || "anonymousUser".equals(authentication.getPrincipal())) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        // 3. Extraer el ID (Depende de cómo implementaste tu UserDetails, asumiendo que el "Principal" es el email o un objeto UserDetails)
-        // Opción A: Si en JwtFilter pusiste el ID en el objeto de autenticación.
-        // Opción B: Buscar por email (que viene en el token).
-        
-        String email = authentication.getName(); // El subject del token (email)
-        
-        // Buscamos el ID usando el email (o podrías optimizar extrayendo el ID del token directamente)
-        // Para mantenerlo limpio, delegamos a un método en AuthService que busque por email.
-        Provider provider = authService.findByEmail(email); // Necesitarás exponer este método simple
+        String email = authentication.getName();
+        Provider provider = authService.findByEmail(email);
         
         if (provider == null) {
             return ResponseEntity.notFound().build();
         }
 
-        // 4. Llamar al servicio de Status
         ProviderStatusResponse status = authService.getProviderStatus(provider.getId());
-        
         return ResponseEntity.ok(status);
     }
 
-
+    /**
+     * Reenviar código de verificación (Email o SMS)
+     * POST /api/auth/resend-verification
+     */
+    @PostMapping("/resend-verification")
+    public ResponseEntity<?> resendVerification(@Valid @RequestBody ResendVerificationRequest request) {
+        try {
+            authService.resendVerification(request);
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Si la cuenta existe y requiere verificación, se ha enviado el código."
+            ));
+            
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            // Errores de lógica de negocio (Ya verificado, sin teléfono)
+            return ResponseEntity.badRequest().body(Map.of(
+                "success", false,
+                "error", e.getMessage()
+            ));
+        } catch (Exception e) {
+            // ✅ CORREGIDO: Eliminamos el log y devolvemos 500 genérico
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
+                "success", false,
+                "error", "Ocurrió un error al procesar la solicitud."
+            ));
+        }
+    }
 }

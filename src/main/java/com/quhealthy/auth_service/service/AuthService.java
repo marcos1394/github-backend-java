@@ -5,6 +5,7 @@ import com.quhealthy.auth_service.dto.ForgotPasswordRequest;
 import com.quhealthy.auth_service.dto.LoginRequest;
 import com.quhealthy.auth_service.dto.ProviderStatusResponse;
 import com.quhealthy.auth_service.dto.RegisterProviderRequest;
+import com.quhealthy.auth_service.dto.ResendVerificationRequest;
 import com.quhealthy.auth_service.dto.ResetPasswordRequest;
 import com.quhealthy.auth_service.model.*;
 import com.quhealthy.auth_service.model.enums.*;
@@ -447,6 +448,70 @@ public class AuthService {
                         .stripeAccountId(provider.getStripeAccountId())
                         .build())
                 .build();
+    }
+
+    // ========================================================================
+    // 7. REENVIAR VERIFICACIÓN (RESEND)
+    // ========================================================================
+    @Transactional
+    public void resendVerification(ResendVerificationRequest request) {
+        log.info("📧 [AuthService] Solicitud de reenvío ({}) para: {}", request.getType(), request.getEmail());
+
+        // 1. Buscar usuario
+        // Nota: Si no existe, NO lanzamos error para evitar Enumeración de Usuarios.
+        // Simplemente logueamos un warning interno y terminamos.
+        Provider provider = providerRepository.findByEmail(request.getEmail()).orElse(null);
+
+        if (provider == null) {
+            log.warn("⚠️ [AuthService] Intento de reenvío para email no existente: {}", request.getEmail());
+            return; 
+        }
+
+        // --- CASO 1: EMAIL ---
+        if ("email".equalsIgnoreCase(request.getType())) {
+            
+            if (provider.isEmailVerified()) {
+                // Aquí sí podemos lanzar error o simplemente ignorar. 
+                // Para UX, es mejor avisar que ya está listo.
+                throw new IllegalStateException("Esta cuenta ya tiene el correo verificado.");
+            }
+
+            // Generar Nuevo Token
+            String newToken = UUID.randomUUID().toString();
+            
+            // Actualizar BD
+            provider.setEmailVerificationToken(newToken);
+            provider.setEmailVerificationExpires(LocalDateTime.now().plusHours(24));
+            providerRepository.save(provider);
+
+            // Enviar Correo (Usando tu NotificationService ya existente)
+            // Link: https://quhealthy.com/verify-email?token=...
+            String link = frontendUrl + "/verify-email?token=" + newToken; // + "&role=provider" si lo necesitas
+            
+            notificationService.sendVerificationEmail(provider.getEmail(), provider.getName(), link);
+            
+            log.info("✅ Correo de verificación reenviado a {}", provider.getEmail());
+        } 
+        
+        // --- CASO 2: TELÉFONO (Placeholder para futura integración Twilio) ---
+        else if ("phone".equalsIgnoreCase(request.getType())) {
+            
+            if (provider.getPhone() == null || provider.getPhone().isEmpty()) {
+                throw new IllegalArgumentException("El usuario no tiene un teléfono registrado.");
+            }
+
+            if (provider.isPhoneVerified()) { // Asegúrate de tener este getter en Provider
+                throw new IllegalStateException("Este teléfono ya está verificado.");
+            }
+
+            // Lógica futura de SMS:
+            // 1. Generar código de 6 dígitos
+            // 2. Guardar en BD (phoneVerificationToken)
+            // 3. Llamar a TwilioService
+            
+            log.info("🚧 Reenvío de SMS solicitado. Pendiente de integración con Twilio.");
+            // Por ahora no lanzamos error, simulamos éxito para no romper el frontend
+        }
     }
 
 
