@@ -4,9 +4,12 @@ import com.quhealthy.auth_service.model.enums.KYCStatus;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode; // <--- NECESARIO
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes; // <--- NECESARIO
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
 @Data
 @Entity
@@ -39,11 +42,13 @@ public class ProviderKYC {
     @Column(name = "document_back_url", columnDefinition = "TEXT")
     private String documentBackUrl;
 
-    // --- Datos Extraídos por IA ---
-    // En Java guardamos el JSON crudo como String. 
-    // Cuando lo necesites usar, usaremos Jackson (ObjectMapper) para convertirlo a Objeto.
+    // --- Datos Extraídos por IA (SOLUCIÓN JSONB) ---
+    // Cambiamos String por Map<String, Object>. 
+    // Hibernate se encarga de serializarlo a JSON automáticamente.
+    // Esto soluciona el error "expression is of type character varying".
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "extracted_data", columnDefinition = "jsonb")
-    private String extractedData; 
+    private Map<String, Object> extractedData;
 
     @Column(name = "curp")
     private String curp;
