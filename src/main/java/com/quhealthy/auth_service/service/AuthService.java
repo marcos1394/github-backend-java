@@ -3,10 +3,12 @@ package com.quhealthy.auth_service.service;
 import com.quhealthy.auth_service.dto.AuthResponse;
 import com.quhealthy.auth_service.dto.ForgotPasswordRequest;
 import com.quhealthy.auth_service.dto.LoginRequest;
+import com.quhealthy.auth_service.dto.ProviderStatusResponse;
 import com.quhealthy.auth_service.dto.RegisterProviderRequest;
 import com.quhealthy.auth_service.dto.ResetPasswordRequest;
 import com.quhealthy.auth_service.model.*;
 import com.quhealthy.auth_service.model.enums.*;
+// Inyectar esto
 import com.quhealthy.auth_service.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +36,7 @@ public class AuthService {
     private final ReferralRepository referralRepository;
     private final PlanRepository planRepository;
     private final JwtService jwtService;
+    private final ProviderCourseRepository courseRepository;
 
     // --- Servicios Externos ---
     private final PasswordEncoder passwordEncoder; // BCrypt
@@ -349,5 +352,115 @@ public class AuthService {
 
         log.info("✅ Contraseña actualizada exitosamente para ID: {}", provider.getId());
     }
+
+    @Transactional(readOnly = true)
+    public ProviderStatusResponse getProviderStatus(Long providerId) {
+        log.info("🔹 [AuthService] Obteniendo estado para Provider ID: {}", providerId);
+
+        // 1. Obtener Provider con sus relaciones clave
+        // Nota: Al usar JPA y tener las relaciones en el modelo, basta con buscar al provider.
+        // Hibernate hará los JOINS o Selects necesarios eficientemente si están configurados como FetchType.LAZY (por defecto)
+        Provider provider = providerRepository.findById(providerId)
+                .orElseThrow(() -> new IllegalArgumentException("Proveedor no encontrado."));
+
+        // 2. Obtener datos satélite (Manejo de nulls seguro)
+        ProviderKYC kyc = kycRepository.findByProviderId(providerId).orElse(null);
+        ProviderLicense license = licenseRepository.findByProviderId(providerId).orElse(null);
+        
+        // Contar cursos
+        long courseCount = courseRepository.countByProviderId(providerId);
+
+        // 3. Buscar Plan Activo
+        // Filtramos en memoria la lista de planes del provider para encontrar el vigente
+        // Esto evita una query extra si ya trajimos los planes, o hace una query ligera si es Lazy.
+        ProviderPlan activePlanData = null;
+        if (provider.getPlans() != null) {
+            activePlanData = provider.getPlans().stream()
+                .filter(p -> (p.getStatus() == PlanStatus.ACTIVE || p.getStatus() == PlanStatus.TRIAL))
+                .filter(p -> p.getEndDate().isAfter(LocalDateTime.now()))
+                .findFirst()
+                .orElse(null);
+        }
+
+        // 4. Determinar Estados (Lógica de Negocio)
+        boolean isKycComplete = provider.isKYCVerified() || (kyc != null && (kyc.getKycStatus() == KYCStatus.APPROVED || kyc.getKycStatus() == KYCStatus.APPROVED));
+        
+        boolean isLicenseRequired = provider.getParentCategoryId() == 1L; // 1 = Salud
+        boolean isLicenseComplete = provider.isLicenseVerified() || (license != null && license.getStatus() == LicenseStatus.VERIFIED);
+        
+        boolean isMarketplaceSetupComplete = provider.isMarketplaceConfigured();
+        boolean isBlocksSetupComplete = courseCount > 0;
+
+        // 5. Construir Detalles del Plan (Mapping)
+        Plan planRef = (activePlanData != null) ? activePlanData.getPlan() : null;
+
+        ProviderStatusResponse.Permissions permissions = ProviderStatusResponse.Permissions.builder()
+                .quMarketAccess(planRef != null && planRef.isQumarketAccess())
+                .quBlocksAccess(planRef != null && planRef.isQublocksAccess())
+                .marketingLevel(planRef != null ? planRef.getMarketingLevel() : 0)
+                .supportLevel(planRef != null ? planRef.getSupportLevel() : 0)
+                .advancedReports(planRef != null && planRef.isAdvancedReports())
+                .userManagement(planRef != null ? planRef.getUserManagement() : 0)
+                .allowAdvancePayments(planRef != null && planRef.isAllowAdvancePayments())
+                // Manejo de "Ilimitados" vs Números
+                .maxAppointments(planRef != null ? (planRef.getMaxAppointments() == -1 ? "Ilimitados" : String.valueOf(planRef.getMaxAppointments())) : "0")
+                .maxProducts(planRef != null ? (planRef.getMaxProducts() == -1 ? "Ilimitados" : String.valueOf(planRef.getMaxProducts())) : "0")
+                .maxCourses(planRef != null ? (planRef.getMaxCourses() == -1 ? "Ilimitados" : String.valueOf(planRef.getMaxCourses())) : "0")
+                .build();
+
+        ProviderStatusResponse.PlanDetails planDetails = ProviderStatusResponse.PlanDetails.builder()
+                .planId(planRef != null ? planRef.getId() : null)
+                .planName(planRef != null ? planRef.getName() : "Sin plan activo")
+                .hasActivePlan(activePlanData != null)
+                .planStatus(provider.getPlanStatus().name()) // Enum a String
+                .endDate(activePlanData != null ? activePlanData.getEndDate() : 
+                        (provider.getPlanStatus() == PlanStatus.TRIAL ? provider.getTrialExpiresAt() : null))
+                .permissions(permissions)
+                .build();
+
+        // 6. Construir Respuesta Final
+        return ProviderStatusResponse.builder()
+                .onboardingStatus(ProviderStatusResponse.OnboardingStatus.builder()
+                        .kyc(ProviderStatusResponse.StatusDetail.builder()
+                                .status(kyc != null ? kyc.getKycStatus().name() : "NOT_STARTED")
+                                .isComplete(isKycComplete)
+                                .build())
+                        .license(ProviderStatusResponse.LicenseDetail.builder()
+                                .isRequired(isLicenseRequired)
+                                .status(license != null ? license.getStatus().name() : "PENDING")
+                                .isComplete(isLicenseComplete)
+                                .build())
+                        .marketplace(ProviderStatusResponse.ConfigDetail.builder()
+                                .isConfigured(isMarketplaceSetupComplete)
+                                .build())
+                        .blocks(ProviderStatusResponse.ConfigDetail.builder()
+                                .isConfigured(isBlocksSetupComplete)
+                                .build())
+                        .build())
+                .planDetails(planDetails)
+                .providerDetails(ProviderStatusResponse.ProviderDetails.builder()
+                        .parentCategoryId(provider.getParentCategoryId())
+                        .email(provider.getEmail())
+                        .name(provider.getName())
+                        .archetype(provider.getArchetype() != null ? provider.getArchetype().name() : null)
+                        .stripeAccountId(provider.getStripeAccountId())
+                        .build())
+                .build();
+    }
+
+
+    // ========================================================================
+    // 6. MÉTODOS DE CONSULTA Y HELPERS (Queries)
+    // ========================================================================
+
+    /**
+     * Helper para buscar un proveedor por email.
+     * Utilizado por AuthController para obtener el contexto del usuario actual (/me).
+     */
+    @Transactional(readOnly = true) // Importante: readOnly optimiza la consulta
+    public Provider findByEmail(String email) {
+        return providerRepository.findByEmail(email).orElse(null);
+    }
+
 
 }

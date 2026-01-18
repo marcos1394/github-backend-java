@@ -2,6 +2,7 @@ package com.quhealthy.auth_service.controller;
 
 import com.quhealthy.auth_service.dto.AuthResponse;
 import com.quhealthy.auth_service.dto.LoginRequest;
+import com.quhealthy.auth_service.dto.ProviderStatusResponse;
 import com.quhealthy.auth_service.dto.RegisterProviderRequest;
 import com.quhealthy.auth_service.model.Provider;
 import com.quhealthy.auth_service.service.AuthService;
@@ -9,6 +10,8 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import com.quhealthy.auth_service.dto.ForgotPasswordRequest;
 import com.quhealthy.auth_service.dto.ResetPasswordRequest;
@@ -136,6 +139,42 @@ public class AuthController {
                 "error", e.getMessage()
             ));
         }
+    }
+
+
+    /**
+     * Endpoint Crítico: Obtener el contexto del usuario actual.
+     * GET /api/auth/me
+     * Header: Authorization: Bearer <token>
+     */
+    @GetMapping("/me")
+    public ResponseEntity<ProviderStatusResponse> getCurrentUser() {
+        // 1. Obtener autenticación del contexto de seguridad (puesto por el Filtro JWT)
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        
+        // 2. Validar que no sea anónimo
+        if (authentication == null || !authentication.isAuthenticated() || "anonymousUser".equals(authentication.getPrincipal())) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        // 3. Extraer el ID (Depende de cómo implementaste tu UserDetails, asumiendo que el "Principal" es el email o un objeto UserDetails)
+        // Opción A: Si en JwtFilter pusiste el ID en el objeto de autenticación.
+        // Opción B: Buscar por email (que viene en el token).
+        
+        String email = authentication.getName(); // El subject del token (email)
+        
+        // Buscamos el ID usando el email (o podrías optimizar extrayendo el ID del token directamente)
+        // Para mantenerlo limpio, delegamos a un método en AuthService que busque por email.
+        Provider provider = authService.findByEmail(email); // Necesitarás exponer este método simple
+        
+        if (provider == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // 4. Llamar al servicio de Status
+        ProviderStatusResponse status = authService.getProviderStatus(provider.getId());
+        
+        return ResponseEntity.ok(status);
     }
 
 
