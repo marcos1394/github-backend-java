@@ -403,9 +403,10 @@ public class AuthService {
                 .userManagement(planRef != null ? planRef.getUserManagement() : 0)
                 .allowAdvancePayments(planRef != null && planRef.isAllowAdvancePayments())
                 // Manejo de "Ilimitados" vs Números
-                .maxAppointments(planRef != null ? (planRef.getMaxAppointments() == -1 ? "Ilimitados" : String.valueOf(planRef.getMaxAppointments())) : "0")
-                .maxProducts(planRef != null ? (planRef.getMaxProducts() == -1 ? "Ilimitados" : String.valueOf(planRef.getMaxProducts())) : "0")
-                .maxCourses(planRef != null ? (planRef.getMaxCourses() == -1 ? "Ilimitados" : String.valueOf(planRef.getMaxCourses())) : "0")
+                // ✅ CORRECCIÓN AQUI: Usamos el helper formatLimit
+                .maxAppointments(formatLimit(planRef != null ? planRef.getMaxAppointments() : null))
+                .maxProducts(formatLimit(planRef != null ? planRef.getMaxProducts() : null))
+                .maxCourses(formatLimit(planRef != null ? planRef.getMaxCourses() : null))
                 .build();
 
         ProviderStatusResponse.PlanDetails planDetails = ProviderStatusResponse.PlanDetails.builder()
@@ -461,6 +462,22 @@ public class AuthService {
     public Provider findByEmail(String email) {
         return providerRepository.findByEmail(email).orElse(null);
     }
+
+
+    /**
+     * Helper para formatear límites del plan de forma segura.
+     * Convierte NULLs a "0" y -1 a "Ilimitados".
+     */
+    private String formatLimit(Integer value) {
+        if (value == null) {
+            return "0";
+        }
+        if (value == -1) {
+            return "Ilimitados";
+        }
+        return String.valueOf(value);
+    }
+
 
 
 }
