@@ -20,6 +20,9 @@ public interface ProviderRepository extends JpaRepository<Provider, Long> {
     // ✅ NUEVO: Buscar por Token de Verificación
     Optional<Provider> findByEmailVerificationToken(String token);
 
-    @Query("SELECT p FROM Provider p WHERE p.email = :identifier OR p.phone = :identifier")
-    Optional<Provider> findByEmailOrPhone(@Param("identifier") String identifier);
+    // En ProviderRepository.java
+
+@Query("SELECT p FROM Provider p WHERE p.email = :identifier OR p.phone = :identifier")
+Optional<Provider> findByEmailOrPhone(@Param("identifier") String identifier);
+
 }

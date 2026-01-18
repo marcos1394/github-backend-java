@@ -1,6 +1,7 @@
 package com.quhealthy.auth_service.controller;
 
 import com.quhealthy.auth_service.dto.AuthResponse;
+import com.quhealthy.auth_service.dto.LoginRequest;
 import com.quhealthy.auth_service.dto.RegisterProviderRequest;
 import com.quhealthy.auth_service.model.Provider;
 import com.quhealthy.auth_service.service.AuthService;
@@ -78,4 +79,26 @@ public class AuthController {
         response.put("message", "QuHealthy Auth Service is running 🚀");
         return ResponseEntity.ok(response);
     }
+
+    /**
+     * Endpoint para Iniciar Sesión.
+     * POST /api/auth/login
+     */
+    @PostMapping("/login")
+    public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
+        try {
+            AuthResponse response = authService.login(request);
+            return ResponseEntity.ok(response);
+            
+        } catch (IllegalArgumentException e) {
+            // Manejo elegante de errores (401 Unauthorized o 400 Bad Request)
+            // Para login, 401 suele ser más semántico si falla el password
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                AuthResponse.builder()
+                    .message(e.getMessage())
+                    .build()
+            );
+        }
+    }
+
 }

@@ -8,7 +8,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import org.locationtech.jts.geom.Point; // Requiere hibernate-spatial
-
+import java.util.List; // <--- IMPORTE NECESARIO PARA LA LISTA
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
@@ -100,6 +100,20 @@ public class Provider extends BaseUser {
 
     // --- RELACIONES (LA SOLUCIÓN AL ERROR DEL PIPELINE) ---
     
+    // =================================================================
+    // ✅ NUEVOS CAMPOS (Corrección para el Login)
+    // =================================================================
+    
+    // 1. Autenticación de Dos Factores (2FA)
+    // Usamos Boolean (Wrapper) para que Lombok genere "getIsTwoFactorEnabled()"
+    // Si usáramos boolean (primitivo), generaría "isIsTwoFactorEnabled()" o similar.
+    @Column(name = "is_two_factor_enabled")
+    private Boolean isTwoFactorEnabled = false;
+
+    @OneToMany(mappedBy = "provider", fetch = FetchType.LAZY)
+    private List<ProviderPlan> plans;
+
+
     // Esta es la variable que Hibernate estaba buscando y no encontraba.
     // El nombre 'tags' debe coincidir con mappedBy="tags" en la clase Tag.
     @ManyToMany(cascade = {CascadeType.PERSIST, CascadeType.MERGE})
