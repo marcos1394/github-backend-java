@@ -91,6 +91,19 @@ public class Provider extends BaseUser {
     @Column(name = "google_calendar_id")
     private String googleCalendarId;
 
+    // =================================================================
+    // 🔐 RECUPERACIÓN DE CONTRASEÑA (Selector/Verifier Pattern)
+    // =================================================================
+    
+    @Column(name = "reset_selector")
+    private String resetSelector;
+
+    @Column(name = "reset_verifier_hash")
+    private String resetVerifierHash; // Guardamos el Hash del verificador, no el verificador
+
+    @Column(name = "reset_token_expires_at")
+    private LocalDateTime resetTokenExpiresAt;
+
     // --- Sistema de Referidos ---
     @Column(name = "referral_code", unique = true)
     private String referralCode;

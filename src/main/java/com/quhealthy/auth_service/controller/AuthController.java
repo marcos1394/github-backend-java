@@ -10,6 +10,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import com.quhealthy.auth_service.dto.ForgotPasswordRequest;
+import com.quhealthy.auth_service.dto.ResetPasswordRequest;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -100,5 +102,41 @@ public class AuthController {
             );
         }
     }
+
+    /**
+     * 1. Solicitar Reseteo (Envía el correo)
+     * POST /api/auth/forgot-password
+     */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<?> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        // Siempre devolvemos OK para no revelar qué correos existen (Seguridad)
+        authService.requestPasswordReset(request);
+        
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "Si el correo existe, recibirás instrucciones para restablecer tu contraseña."
+        ));
+    }
+
+    /**
+     * 2. Ejecutar Reseteo (Cambia la contraseña)
+     * POST /api/auth/reset-password
+     */
+    @PostMapping("/reset-password")
+    public ResponseEntity<?> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        try {
+            authService.resetPassword(request);
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Contraseña actualizada correctamente."
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "success", false,
+                "error", e.getMessage()
+            ));
+        }
+    }
+
 
 }

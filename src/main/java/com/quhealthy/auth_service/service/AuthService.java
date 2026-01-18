@@ -1,8 +1,10 @@
 package com.quhealthy.auth_service.service;
 
 import com.quhealthy.auth_service.dto.AuthResponse;
+import com.quhealthy.auth_service.dto.ForgotPasswordRequest;
 import com.quhealthy.auth_service.dto.LoginRequest;
 import com.quhealthy.auth_service.dto.RegisterProviderRequest;
+import com.quhealthy.auth_service.dto.ResetPasswordRequest;
 import com.quhealthy.auth_service.model.*;
 import com.quhealthy.auth_service.model.enums.*;
 import com.quhealthy.auth_service.repository.*;
@@ -15,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.quhealthy.auth_service.service.security.JwtService; // Importamos el nuevo servicio
 import java.time.LocalDateTime;
 import java.security.SecureRandom;
+import java.util.HexFormat;
 import java.util.UUID;
 
 @Slf4j
@@ -259,6 +262,92 @@ public class AuthService {
                         .twoFactorRequired(false)
                         .build())
                 .build();
+    }
+
+
+    // ========================================================================
+    // 4. SOLICITAR RESETEO (FORGOT PASSWORD)
+    // ========================================================================
+    @Transactional
+    public void requestPasswordReset(ForgotPasswordRequest request) {
+        log.info("🚀 [AuthService] Solicitud de reseteo para: {}", request.getEmail());
+
+        // 1. Buscar usuario (Si no existe, no hacemos nada por seguridad - User Enumeration Prevention)
+        Provider provider = providerRepository.findByEmail(request.getEmail()).orElse(null);
+
+        if (provider != null) {
+            // 2. Generar Selector (16 bytes) y Verifier (32 bytes)
+            SecureRandom random = new SecureRandom();
+            byte[] selectorBytes = new byte[16];
+            byte[] verifierBytes = new byte[32];
+            random.nextBytes(selectorBytes);
+            random.nextBytes(verifierBytes);
+
+            // Convertir a Hex (Equivalente a .toString('hex') de Node)
+            String selector = HexFormat.of().formatHex(selectorBytes);
+            String verifier = HexFormat.of().formatHex(verifierBytes);
+
+            // 3. Hashear el Verifier (Usamos passwordEncoder que ya es BCrypt)
+            String verifierHash = passwordEncoder.encode(verifier);
+
+            // 4. Guardar en BD
+            provider.setResetSelector(selector);
+            provider.setResetVerifierHash(verifierHash);
+            provider.setResetTokenExpiresAt(LocalDateTime.now().plusMinutes(60)); // 1 hora
+            providerRepository.save(provider);
+
+            // 5. Construir Link y Enviar Correo
+            // Link: https://quhealthy.com/reset-password?selector=...&verifier=...&role=provider
+            String link = String.format("%s/reset-password?selector=%s&verifier=%s&role=provider", 
+                    frontendUrl, selector, verifier);
+
+            // Usamos la plantilla 'password-reset-request' que ya tienes
+            notificationService.sendPasswordResetRequest(provider.getEmail(), link);
+            
+            log.info("✅ Tokens generados y correo enviado a {}", request.getEmail());
+        } else {
+            log.warn("ℹ️ Email no encontrado: {}. Silenciando respuesta.", request.getEmail());
+        }
+    }
+
+    // ========================================================================
+    // 5. CAMBIAR CONTRASEÑA (RESET PASSWORD)
+    // ========================================================================
+    @Transactional
+    public void resetPassword(ResetPasswordRequest request) {
+        log.info("🔄 [AuthService] Intentando restablecer password con selector: {}", request.getSelector());
+
+        // 1. Buscar por Selector y Validar Expiración
+        // Nota: Deberíamos tener un método findByResetSelector en el repo, pero podemos usar un filter rápido o query
+        // Para hacerlo limpio, agregaremos el método al Repository abajo.
+        Provider provider = providerRepository.findByResetSelector(request.getSelector())
+                .orElseThrow(() -> new IllegalArgumentException("El enlace es inválido o ha expirado."));
+
+        // 2. Validar Expiración Temporal
+        if (provider.getResetTokenExpiresAt().isBefore(LocalDateTime.now())) {
+            throw new IllegalArgumentException("El enlace ha expirado. Solicita uno nuevo.");
+        }
+
+        // 3. Validar el Verifier contra el Hash almacenado
+        if (!passwordEncoder.matches(request.getVerifier(), provider.getResetVerifierHash())) {
+            throw new IllegalArgumentException("Enlace inválido (Verificación fallida).");
+        }
+
+        // 4. Actualizar Password
+        provider.setPassword(passwordEncoder.encode(request.getNewPassword()));
+
+        // 5. Limpiar Tokens (Single Use)
+        provider.setResetSelector(null);
+        provider.setResetVerifierHash(null);
+        provider.setResetTokenExpiresAt(null);
+        
+        providerRepository.save(provider);
+
+        // 6. Enviar Notificación de Seguridad (Plantilla 'password-changed')
+        String time = LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
+        notificationService.sendPasswordChangedAlert(provider.getEmail(), provider.getName(), time, "Navegador Web");
+
+        log.info("✅ Contraseña actualizada exitosamente para ID: {}", provider.getId());
     }
 
 }

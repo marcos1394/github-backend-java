@@ -25,4 +25,7 @@ public interface ProviderRepository extends JpaRepository<Provider, Long> {
 @Query("SELECT p FROM Provider p WHERE p.email = :identifier OR p.phone = :identifier")
 Optional<Provider> findByEmailOrPhone(@Param("identifier") String identifier);
 
+Optional<Provider> findByResetSelector(String resetSelector);
+
+
 }
