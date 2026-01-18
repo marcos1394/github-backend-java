@@ -155,4 +155,32 @@ public class AuthService {
 
         return provider;
     }
+
+    // ========================================================================
+    // 2. VERIFICACIÓN DE EMAIL (¡ESTO FALTABA!)
+    // ========================================================================
+    public String verifyEmail(String token) {
+        Provider provider = providerRepository.findByEmailVerificationToken(token)
+                .orElseThrow(() -> new IllegalArgumentException("Token inválido o expirado."));
+
+        if (provider.isEmailVerified()) {
+            return "El correo ya ha sido verificado anteriormente.";
+        }
+
+        if (provider.getEmailVerificationExpires().isBefore(LocalDateTime.now())) {
+            throw new IllegalArgumentException("El enlace de verificación ha expirado. Por favor solicita uno nuevo.");
+        }
+
+        // Activar
+        provider.setEmailVerified(true);
+        provider.setEmailVerificationToken(null); // Invalidar token por seguridad
+        provider.setEmailVerificationExpires(null);
+        
+        providerRepository.save(provider);
+        
+        log.info("✅ Email verificado para provider ID: {}", provider.getId());
+        
+        return "Correo verificado exitosamente.";
+    }
+
 }

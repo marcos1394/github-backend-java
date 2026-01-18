@@ -47,6 +47,28 @@ public class AuthController {
     }
 
     /**
+     * Endpoint para Verificar Email (El link del correo apunta aquí o al frontend que llama aquí).
+     * GET /api/auth/verify-email?token=xyz
+     */
+    @GetMapping("/verify-email")
+    public ResponseEntity<?> verifyEmail(@RequestParam("token") String token) {
+        try {
+            String message = authService.verifyEmail(token);
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", message
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "success", false,
+                "error", e.getMessage()
+            ));
+        }
+    }    
+
+
+    /**
      * Endpoint de prueba para verificar que el servidor responde (Health Check).
      */
     @GetMapping("/ping")
