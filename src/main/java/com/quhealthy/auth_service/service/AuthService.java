@@ -383,7 +383,7 @@ public class AuthService {
         }
 
         // 4. Determinar Estados (Lógica de Negocio)
-        boolean isKycComplete = provider.isKYCVerified() || (kyc != null && (kyc.getKycStatus() == KYCStatus.APPROVED || kyc.getKycStatus() == KYCStatus.APPROVED));
+        boolean isKycComplete = provider.isKycVerified() || (kyc != null && (kyc.getKycStatus() == KYCStatus.APPROVED || kyc.getKycStatus() == KYCStatus.APPROVED));
         
         boolean isLicenseRequired = provider.getParentCategoryId() == 1L; // 1 = Salud
         boolean isLicenseComplete = provider.isLicenseVerified() || (license != null && license.getStatus() == LicenseStatus.VERIFIED);

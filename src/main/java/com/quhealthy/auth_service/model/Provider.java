@@ -8,16 +8,24 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import org.locationtech.jts.geom.Point; // Requiere hibernate-spatial
-import java.util.List; // <--- IMPORTE NECESARIO PARA LA LISTA
+
+// --- Imports de Spring Security (NUEVOS) ---
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
+
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Entity
 @Table(name = "providers")
-public class Provider extends BaseUser {
+// ✅ CAMBIO CRÍTICO: Implementar UserDetails
+public class Provider extends BaseUser implements UserDetails {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -36,12 +44,11 @@ public class Provider extends BaseUser {
     private Double lat;
     private Double lng;
 
-    // Coordenadas Espaciales (PostGIS) - Nivel PRO
-    // Nota: Asegúrate de que la BD tenga la extensión PostGIS activada
+    // Coordenadas Espaciales (PostGIS)
     @Column(columnDefinition = "geography(Point,4326)")
     private Point location;
 
-    // --- Categorización (IDs o Relaciones) ---
+    // --- Categorización ---
     @Column(name = "parent_category_id", nullable = false)
     private Long parentCategoryId;
 
@@ -55,8 +62,9 @@ public class Provider extends BaseUser {
     @Enumerated(EnumType.STRING)
     private Archetype archetype;
 
+    // ✅ CAMBIO: Renombrado a isKycVerified (CamelCase estándar) para que Lombok genere isKycVerified()
     @Column(name = "is_kyc_verified")
-    private boolean isKYCVerified = false;
+    private boolean isKycVerified = false;
 
     @Column(name = "is_license_verified")
     private boolean isLicenseVerified = false;
@@ -75,7 +83,7 @@ public class Provider extends BaseUser {
     @Column(name = "trial_expires_at")
     private LocalDateTime trialExpiresAt;
 
-    // --- Integraciones (Stripe & Google) ---
+    // --- Integraciones ---
     @Column(name = "stripe_account_id", unique = true)
     private String stripeAccountId;
 
@@ -99,7 +107,7 @@ public class Provider extends BaseUser {
     private String resetSelector;
 
     @Column(name = "reset_verifier_hash")
-    private String resetVerifierHash; // Guardamos el Hash del verificador, no el verificador
+    private String resetVerifierHash;
 
     @Column(name = "reset_token_expires_at")
     private LocalDateTime resetTokenExpiresAt;
@@ -111,32 +119,69 @@ public class Provider extends BaseUser {
     @Column(name = "referred_by_id")
     private Integer referredById;
 
-    // --- RELACIONES (LA SOLUCIÓN AL ERROR DEL PIPELINE) ---
-    
     // =================================================================
-    // ✅ NUEVOS CAMPOS (Corrección para el Login)
+    // 🛡️ 2FA (Agregado para completitud Enterprise)
     // =================================================================
     
-    // 1. Autenticación de Dos Factores (2FA)
-    // Usamos Boolean (Wrapper) para que Lombok genere "getIsTwoFactorEnabled()"
-    // Si usáramos boolean (primitivo), generaría "isIsTwoFactorEnabled()" o similar.
     @Column(name = "is_two_factor_enabled")
     private Boolean isTwoFactorEnabled = false;
+
+    @Column(name = "two_factor_secret", columnDefinition = "TEXT")
+    private String twoFactorSecret; 
+
+    // --- RELACIONES ---
 
     @OneToMany(mappedBy = "provider", fetch = FetchType.LAZY)
     private List<ProviderPlan> plans;
 
-
-    // Esta es la variable que Hibernate estaba buscando y no encontraba.
-    // El nombre 'tags' debe coincidir con mappedBy="tags" en la clase Tag.
     @ManyToMany(cascade = {CascadeType.PERSIST, CascadeType.MERGE})
     @JoinTable(
         name = "provider_tags",
         joinColumns = @JoinColumn(name = "provider_id"),
         inverseJoinColumns = @JoinColumn(name = "tag_id")
     )
-    @ToString.Exclude // IMPORTANTE: Previene bucles infinitos en logs
-    @EqualsAndHashCode.Exclude // IMPORTANTE: Previene bucles infinitos en comparaciones
+    @ToString.Exclude 
+    @EqualsAndHashCode.Exclude 
     private Set<Tag> tags = new HashSet<>();
 
+    // =================================================================
+    // 👮 IMPLEMENTACIÓN DE USER DETAILS (SPRING SECURITY)
+    // =================================================================
+
+    @Override
+    public Collection<? extends GrantedAuthority> getAuthorities() {
+        return List.of(new SimpleGrantedAuthority(role.name()));
+    }
+
+    @Override
+    public String getUsername() {
+        // Asumiendo que 'email' está en BaseUser
+        return getEmail(); 
+    }
+
+    @Override
+    public String getPassword() {
+        // Asumiendo que 'password' está en BaseUser
+        return super.getPassword(); 
+    }
+
+    @Override
+    public boolean isAccountNonExpired() {
+        return true;
+    }
+
+    @Override
+    public boolean isAccountNonLocked() {
+        return true;
+    }
+
+    @Override
+    public boolean isCredentialsNonExpired() {
+        return true;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return true;
+    }
 }
