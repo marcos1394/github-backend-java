@@ -3,6 +3,7 @@ package com.quhealthy.auth_service.service;
 import com.quhealthy.auth_service.dto.AuthResponse;
 import com.quhealthy.auth_service.dto.ForgotPasswordRequest;
 import com.quhealthy.auth_service.dto.LoginRequest;
+
 import com.quhealthy.auth_service.dto.ProviderStatusResponse;
 import com.quhealthy.auth_service.dto.RegisterProviderRequest;
 import com.quhealthy.auth_service.dto.ResendVerificationRequest;
@@ -21,6 +22,7 @@ import com.quhealthy.auth_service.service.security.JwtService; // Importamos el 
 import java.time.LocalDateTime;
 import java.security.SecureRandom;
 import java.util.HexFormat;
+import java.util.Random;
 import java.util.UUID;
 
 @Slf4j
@@ -451,15 +453,68 @@ public class AuthService {
     }
 
     // ========================================================================
-    // 7. REENVIAR VERIFICACIÓN (RESEND)
+    // 8. VERIFICAR TELÉFONO (SMS)
+    // ========================================================================
+    /**
+     * Verifica el código SMS enviado por el usuario.
+     * @param email Email del usuario autenticado (extraído del Token JWT).
+     * @param code Código de 6 dígitos ingresado por el usuario.
+     */
+    @Transactional
+    public void verifyPhone(String email, String code) {
+        log.info("📱 [AuthService] Intentando verificar teléfono para: {}", email);
+
+        // 1. Buscar al Proveedor
+        // Usamos el email del token para garantizar que verificamos al usuario correcto
+        Provider provider = providerRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("Usuario no encontrado."));
+
+        // 2. Validar si ya está verificado
+        // Al ser 'boolean' primitivo en tu modelo, Lombok genera 'isPhoneVerified()'
+        if (provider.isPhoneVerified()) {
+            log.warn("⚠️ [AuthService] El usuario {} intentó verificar un teléfono ya verificado.", email);
+            throw new IllegalStateException("Tu teléfono ya ha sido verificado anteriormente.");
+        }
+
+        // 3. Validar que exista una solicitud pendiente
+        if (provider.getPhoneVerificationToken() == null) {
+            throw new IllegalArgumentException("No hay un proceso de verificación de teléfono activo. Solicita un código nuevo.");
+        }
+
+        // 4. Validar Coincidencia del Código
+        // Usamos .equals() para comparar Strings de forma segura
+        if (!provider.getPhoneVerificationToken().equals(code)) {
+            log.warn("❌ [AuthService] Código SMS incorrecto para usuario {}", email);
+            throw new IllegalArgumentException("El código de verificación es incorrecto.");
+        }
+
+        // 5. Validar Expiración
+        // Comparamos si la fecha de expiración es ANTES de "ahora"
+        if (provider.getPhoneVerificationExpires().isBefore(LocalDateTime.now())) {
+            log.warn("⏰ [AuthService] Código SMS expirado para usuario {}", email);
+            throw new IllegalArgumentException("El código ha expirado. Por favor, solicita uno nuevo.");
+        }
+
+        // 6. ÉXITO: Actualizar Estado
+        provider.setPhoneVerified(true);           // Marcamos como verificado
+        provider.setPhoneVerificationToken(null);  // Limpiamos el token por seguridad
+        provider.setPhoneVerificationExpires(null); // Limpiamos la expiración
+
+        // Guardamos los cambios en BD
+        providerRepository.save(provider);
+
+        log.info("✅ [AuthService] Teléfono verificado exitosamente para Provider ID: {}", provider.getId());
+    }
+
+    // ========================================================================
+    // 7. REENVIAR VERIFICACIÓN (RESEND) - EMAIL & SMS
     // ========================================================================
     @Transactional
     public void resendVerification(ResendVerificationRequest request) {
-        log.info("📧 [AuthService] Solicitud de reenvío ({}) para: {}", request.getType(), request.getEmail());
+        log.info("📩 [AuthService] Solicitud de reenvío ({}) para: {}", request.getType(), request.getEmail());
 
         // 1. Buscar usuario
         // Nota: Si no existe, NO lanzamos error para evitar Enumeración de Usuarios.
-        // Simplemente logueamos un warning interno y terminamos.
         Provider provider = providerRepository.findByEmail(request.getEmail()).orElse(null);
 
         if (provider == null) {
@@ -471,12 +526,10 @@ public class AuthService {
         if ("email".equalsIgnoreCase(request.getType())) {
             
             if (provider.isEmailVerified()) {
-                // Aquí sí podemos lanzar error o simplemente ignorar. 
-                // Para UX, es mejor avisar que ya está listo.
                 throw new IllegalStateException("Esta cuenta ya tiene el correo verificado.");
             }
 
-            // Generar Nuevo Token
+            // Generar Nuevo Token (UUID)
             String newToken = UUID.randomUUID().toString();
             
             // Actualizar BD
@@ -484,37 +537,41 @@ public class AuthService {
             provider.setEmailVerificationExpires(LocalDateTime.now().plusHours(24));
             providerRepository.save(provider);
 
-            // Enviar Correo (Usando tu NotificationService ya existente)
-            // Link: https://quhealthy.com/verify-email?token=...
-            String link = frontendUrl + "/verify-email?token=" + newToken; // + "&role=provider" si lo necesitas
-            
+            // Enviar Correo
+            String link = frontendUrl + "/verify-email?token=" + newToken;
             notificationService.sendVerificationEmail(provider.getEmail(), provider.getName(), link);
             
             log.info("✅ Correo de verificación reenviado a {}", provider.getEmail());
         } 
         
-        // --- CASO 2: TELÉFONO (Placeholder para futura integración Twilio) ---
+        // --- CASO 2: TELÉFONO (SMS) ---
         else if ("phone".equalsIgnoreCase(request.getType())) {
             
+            // A. Validaciones Previas
             if (provider.getPhone() == null || provider.getPhone().isEmpty()) {
-                throw new IllegalArgumentException("El usuario no tiene un teléfono registrado.");
+                throw new IllegalArgumentException("El usuario no tiene un teléfono registrado para verificar.");
             }
 
-            if (provider.isPhoneVerified()) { // Asegúrate de tener este getter en Provider
+            if (provider.isPhoneVerified()) {
                 throw new IllegalStateException("Este teléfono ya está verificado.");
             }
 
-            // Lógica futura de SMS:
-            // 1. Generar código de 6 dígitos
-            // 2. Guardar en BD (phoneVerificationToken)
-            // 3. Llamar a TwilioService
+            // B. Generar código numérico de 6 dígitos (100000 - 999999)
+            String smsCode = String.valueOf(new Random().nextInt(900000) + 100000);
             
-            log.info("🚧 Reenvío de SMS solicitado. Pendiente de integración con Twilio.");
-            // Por ahora no lanzamos error, simulamos éxito para no romper el frontend
+            // C. Guardar en Base de Datos
+            provider.setPhoneVerificationToken(smsCode);
+            provider.setPhoneVerificationExpires(LocalDateTime.now().plusMinutes(10)); // Validez de 10 min
+            
+            providerRepository.save(provider); // Guardamos antes de enviar
+
+            // D. Enviar SMS (Delega a NotificationService -> TwilioService)
+            notificationService.sendVerificationSms(provider.getPhone(), smsCode);
+            
+            log.info("✅ SMS de verificación generado y enviado al usuario ID: {}", provider.getId());
         }
     }
-
-
+    
     // ========================================================================
     // 6. MÉTODOS DE CONSULTA Y HELPERS (Queries)
     // ========================================================================

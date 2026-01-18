@@ -5,6 +5,7 @@ import com.quhealthy.auth_service.dto.LoginRequest;
 import com.quhealthy.auth_service.dto.ProviderStatusResponse;
 import com.quhealthy.auth_service.dto.RegisterProviderRequest;
 import com.quhealthy.auth_service.model.Provider;
+import com.quhealthy.auth_service.dto.VerifyPhoneRequest; // Asegúrate de tener este import
 import com.quhealthy.auth_service.dto.ResendVerificationRequest;
 import com.quhealthy.auth_service.service.AuthService;
 import jakarta.validation.Valid;
@@ -190,4 +191,47 @@ public class AuthController {
             ));
         }
     }
+
+    /**
+     * Verificar código SMS
+     * POST /api/auth/verify-phone
+     * Requiere Header: Authorization: Bearer <token>
+     */
+    @PostMapping("/verify-phone")
+    public ResponseEntity<?> verifyPhone(@Valid @RequestBody VerifyPhoneRequest request) {
+        // 1. Obtener quien hace la petición desde el JWT (Seguridad)
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        
+        // Validación extra de seguridad (aunque el filtro JWT ya lo hace)
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        String email = authentication.getName(); // El email viene en el "subject" del token
+
+        try {
+            // 2. Llamar al servicio
+            authService.verifyPhone(email, request.getCode());
+
+            // 3. Respuesta de Éxito
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Teléfono verificado correctamente."
+            ));
+
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            // 4. Errores de negocio (Código mal, expirado, ya verificado) -> 400 Bad Request
+            return ResponseEntity.badRequest().body(Map.of(
+                "success", false,
+                "error", e.getMessage()
+            ));
+        } catch (Exception e) {
+            // 5. Error inesperado -> 500 Internal Server Error
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
+                "success", false,
+                "error", "Ocurrió un error al verificar el teléfono."
+            ));
+        }
+    }
+
 }
