@@ -5,13 +5,16 @@ import com.quhealthy.auth_service.model.enums.LicenseStatus;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode; // <--- 1. IMPORTAR ESTO
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes; // <--- 2. IMPORTAR ESTO
 
 import java.time.LocalDateTime;
+import java.util.Map; // <--- 3. IMPORTAR ESTO
 
 @Data
 @Entity
-@Table(name = "provider_licenses") // Estandarizamos a snake_case plural
+@Table(name = "provider_licenses")
 public class ProviderLicense {
 
     @Id
@@ -62,9 +65,13 @@ public class ProviderLicense {
     @Column(name = "profession_extracted")
     private String professionExtracted;
 
-    // JSON crudo de la IA (Gemini)
+    // =================================================================
+    // 🔧 LA CORRECCIÓN: JSONB Mapping
+    // =================================================================
+    // Cambiamos String por Map<String, Object> y agregamos la anotación.
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "extracted_data", columnDefinition = "jsonb")
-    private String extractedData;
+    private Map<String, Object> extractedData;
 
     // --- Timestamps ---
     @CreationTimestamp

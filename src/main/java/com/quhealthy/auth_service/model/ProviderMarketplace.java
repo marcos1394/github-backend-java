@@ -3,10 +3,13 @@ package com.quhealthy.auth_service.model;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode; // <--- 1. IMPORTAR
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes; // <--- 2. IMPORTAR
 
 import java.time.LocalDateTime;
-// import java.util.List; // Descomentar cuando tengas Services y Staff
+import java.util.Map; // <--- 3. IMPORTAR
+// import java.util.List; 
 
 @Data
 @Entity
@@ -29,7 +32,7 @@ public class ProviderMarketplace {
     @Column(name = "store_slug", unique = true)
     private String storeSlug;
 
-    // --- Branding & UI (Mapeo exacto a tus campos snake_case) ---
+    // --- Branding & UI ---
     @Column(name = "store_logo_url")
     private String storeLogo;
 
@@ -57,12 +60,15 @@ public class ProviderMarketplace {
     @Column(name = "meta_description")
     private String metaDescription;
 
-    // --- Redes Sociales (JSONB) ---
-    // Guardamos el JSON como String. Usaremos Jackson para leerlo/escribirlo en el DTO.
+    // =================================================================
+    // 🔧 LA CORRECCIÓN: JSONB Mapping
+    // =================================================================
+    // Cambiamos String por Map<String, Object> para evitar el error de tipos en Postgres
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "social_links", columnDefinition = "jsonb")
-    private String socialLinks;
+    private Map<String, Object> socialLinks;
 
-    // --- Relaciones Futuras (Comentadas para que compile ahora) ---
+    // --- Relaciones Futuras ---
     // @OneToMany(mappedBy = "marketplace")
     // private List<ProviderService> services;
 
