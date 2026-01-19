@@ -582,71 +582,108 @@ public class AuthService {
     }
 
     // ========================================================================
-    // 7. REENVIAR VERIFICACIÓN (RESEND) - EMAIL & SMS
+    // 7. REENVIAR VERIFICACIÓN (RESEND) - EMAIL & SMS (POLIMÓRFICO)
     // ========================================================================
     @Transactional
     public void resendVerification(ResendVerificationRequest request) {
         log.info("📩 [AuthService] Solicitud de reenvío ({}) para: {}", request.getType(), request.getEmail());
 
-        // 1. Buscar usuario
-        // Nota: Si no existe, NO lanzamos error para evitar Enumeración de Usuarios.
-        Provider provider = providerRepository.findByEmail(request.getEmail()).orElse(null);
+        // Variable para la URL (Usa la de Cloud Run para tus pruebas actuales)
+        String baseUrl = "https://auth-service-629639328783.us-central1.run.app/api/auth"; 
+        // Cuando tengas frontend, usa: String baseUrl = this.frontendUrl;
 
-        if (provider == null) {
-            log.warn("⚠️ [AuthService] Intento de reenvío para email no existente: {}", request.getEmail());
-            return; 
+        // --------------------------------------------------------------------
+        // 1. INTENTAR BUSCAR COMO PROVIDER
+        // --------------------------------------------------------------------
+        var providerOpt = providerRepository.findByEmail(request.getEmail());
+
+        if (providerOpt.isPresent()) {
+            Provider provider = providerOpt.get();
+
+            // --- CASO 1.A: EMAIL (PROVIDER) ---
+            if ("email".equalsIgnoreCase(request.getType())) {
+                if (provider.isEmailVerified()) {
+                    throw new IllegalStateException("Esta cuenta ya tiene el correo verificado.");
+                }
+
+                String newToken = UUID.randomUUID().toString();
+                provider.setEmailVerificationToken(newToken);
+                provider.setEmailVerificationExpires(LocalDateTime.now().plusHours(24)); // Ajusta si tu setter se llama diferente
+                providerRepository.save(provider);
+
+                // Construir Link
+                String link = baseUrl + "/verify-email?token=" + newToken;
+                notificationService.sendVerificationEmail(provider.getEmail(), provider.getName(), link);
+                
+                log.info("✅ Correo de verificación reenviado a Provider: {}", provider.getEmail());
+                return;
+            }
+            
+            // --- CASO 1.B: TELÉFONO/SMS (PROVIDER) ---
+            else if ("phone".equalsIgnoreCase(request.getType())) {
+                if (provider.getPhone() == null || provider.getPhone().isEmpty()) {
+                    throw new IllegalArgumentException("El usuario no tiene un teléfono registrado.");
+                }
+                if (provider.isPhoneVerified()) {
+                    throw new IllegalStateException("Este teléfono ya está verificado.");
+                }
+
+                String smsCode = String.valueOf(new Random().nextInt(900000) + 100000);
+                provider.setPhoneVerificationToken(smsCode);
+                provider.setPhoneVerificationExpires(LocalDateTime.now().plusMinutes(10));
+                providerRepository.save(provider);
+
+                notificationService.sendVerificationSms(provider.getPhone(), smsCode);
+                log.info("✅ SMS reenviado a Provider ID: {}", provider.getId());
+                return;
+            }
         }
 
-        // --- CASO 1: EMAIL ---
-        if ("email".equalsIgnoreCase(request.getType())) {
-            
-            if (provider.isEmailVerified()) {
-                throw new IllegalStateException("Esta cuenta ya tiene el correo verificado.");
+        // --------------------------------------------------------------------
+        // 2. INTENTAR BUSCAR COMO CONSUMER (¡LO NUEVO!)
+        // --------------------------------------------------------------------
+        var consumerOpt = consumerRepository.findByEmail(request.getEmail());
+
+        if (consumerOpt.isPresent()) {
+            Consumer consumer = consumerOpt.get();
+
+            // --- CASO 2.A: EMAIL (CONSUMER) ---
+            if ("email".equalsIgnoreCase(request.getType())) {
+                if (consumer.isEmailVerified()) {
+                    throw new IllegalStateException("Esta cuenta ya tiene el correo verificado.");
+                }
+
+                String newToken = UUID.randomUUID().toString();
+                // Ojo: Asegúrate que los setters coincidan con tu Entidad Consumer
+                consumer.setEmailVerificationToken(newToken);
+                consumer.setEmailVerificationExpires(LocalDateTime.now().plusHours(24)); 
+                consumerRepository.save(consumer);
+
+                // Construir Link
+                String link = baseUrl + "/verify-email?token=" + newToken;
+                notificationService.sendVerificationEmail(consumer.getEmail(), consumer.getName(), link);
+
+                log.info("✅ Correo de verificación reenviado a Consumer: {}", consumer.getEmail());
+                return;
             }
 
-            // Generar Nuevo Token (UUID)
-            String newToken = UUID.randomUUID().toString();
-            
-            // Actualizar BD
-            provider.setEmailVerificationToken(newToken);
-            provider.setEmailVerificationExpires(LocalDateTime.now().plusHours(24));
-            providerRepository.save(provider);
-
-            // Enviar Correo
-            String link = frontendUrl + "/verify-email?token=" + newToken;
-            notificationService.sendVerificationEmail(provider.getEmail(), provider.getName(), link);
-            
-            log.info("✅ Correo de verificación reenviado a {}", provider.getEmail());
-        } 
-        
-        // --- CASO 2: TELÉFONO (SMS) ---
-        else if ("phone".equalsIgnoreCase(request.getType())) {
-            
-            // A. Validaciones Previas
-            if (provider.getPhone() == null || provider.getPhone().isEmpty()) {
-                throw new IllegalArgumentException("El usuario no tiene un teléfono registrado para verificar.");
+            // --- CASO 2.B: TELÉFONO (CONSUMER) ---
+            // Si el consumidor no tiene lógica de SMS aún, lanzamos advertencia o implementamos igual que Provider
+            else if ("phone".equalsIgnoreCase(request.getType())) {
+                 log.warn("⚠️ SMS solicitado para Consumer, pero no implementado aún.");
+                 // Aquí puedes copiar la lógica de SMS del Provider si tu entidad Consumer tiene los campos de teléfono.
+                 return;
             }
-
-            if (provider.isPhoneVerified()) {
-                throw new IllegalStateException("Este teléfono ya está verificado.");
-            }
-
-            // B. Generar código numérico de 6 dígitos (100000 - 999999)
-            String smsCode = String.valueOf(new Random().nextInt(900000) + 100000);
-            
-            // C. Guardar en Base de Datos
-            provider.setPhoneVerificationToken(smsCode);
-            provider.setPhoneVerificationExpires(LocalDateTime.now().plusMinutes(10)); // Validez de 10 min
-            
-            providerRepository.save(provider); // Guardamos antes de enviar
-
-            // D. Enviar SMS (Delega a NotificationService -> TwilioService)
-            notificationService.sendVerificationSms(provider.getPhone(), smsCode);
-            
-            log.info("✅ SMS de verificación generado y enviado al usuario ID: {}", provider.getId());
         }
+
+        // --------------------------------------------------------------------
+        // 3. NO ENCONTRADO EN NINGUNO
+        // --------------------------------------------------------------------
+        log.warn("⚠️ [AuthService] Intento de reenvío para email no existente: {}", request.getEmail());
+        // Retornamos silenciosamente (200 OK) por seguridad.
     }
-    
+
+
     // ========================================================================
     // 6. MÉTODOS DE CONSULTA Y HELPERS (Queries)
     // ========================================================================
