@@ -25,6 +25,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.quhealthy.auth_service.service.security.JwtService; // Importamos el nuevo servicio
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.Random;
@@ -438,44 +439,88 @@ public class AuthService {
 
 
     // ========================================================================
-    // 5. CAMBIAR CONTRASEÑA (RESET PASSWORD)
+    // 5. CAMBIAR CONTRASEÑA (RESET PASSWORD) - POLIMÓRFICO
     // ========================================================================
     @Transactional
     public void resetPassword(ResetPasswordRequest request) {
         log.info("🔄 [AuthService] Intentando restablecer password con selector: {}", request.getSelector());
 
-        // 1. Buscar por Selector y Validar Expiración
-        // Nota: Deberíamos tener un método findByResetSelector en el repo, pero podemos usar un filter rápido o query
-        // Para hacerlo limpio, agregaremos el método al Repository abajo.
-        Provider provider = providerRepository.findByResetSelector(request.getSelector())
-                .orElseThrow(() -> new IllegalArgumentException("El enlace es inválido o ha expirado."));
+        String time = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm"));
 
-        // 2. Validar Expiración Temporal
-        if (provider.getResetTokenExpiresAt().isBefore(LocalDateTime.now())) {
-            throw new IllegalArgumentException("El enlace ha expirado. Solicita uno nuevo.");
-        }
-
-        // 3. Validar el Verifier contra el Hash almacenado
-        if (!passwordEncoder.matches(request.getVerifier(), provider.getResetVerifierHash())) {
-            throw new IllegalArgumentException("Enlace inválido (Verificación fallida).");
-        }
-
-        // 4. Actualizar Password
-        provider.setPassword(passwordEncoder.encode(request.getNewPassword()));
-
-        // 5. Limpiar Tokens (Single Use)
-        provider.setResetSelector(null);
-        provider.setResetVerifierHash(null);
-        provider.setResetTokenExpiresAt(null);
+        // --------------------------------------------------------------------
+        // A. INTENTAR COMO PROVIDER
+        // --------------------------------------------------------------------
+        var providerOpt = providerRepository.findByResetSelector(request.getSelector());
         
-        providerRepository.save(provider);
+        if (providerOpt.isPresent()) {
+            Provider provider = providerOpt.get();
 
-        // 6. Enviar Notificación de Seguridad (Plantilla 'password-changed')
-        String time = LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
-        notificationService.sendPasswordChangedAlert(provider.getEmail(), provider.getName(), time, "Navegador Web");
+            // A.1 Validar Expiración
+            if (provider.getResetTokenExpiresAt() == null || provider.getResetTokenExpiresAt().isBefore(LocalDateTime.now())) {
+                throw new IllegalArgumentException("El enlace ha expirado. Solicita uno nuevo.");
+            }
 
-        log.info("✅ Contraseña actualizada exitosamente para ID: {}", provider.getId());
+            // A.2 Validar Verifier vs Hash
+            if (!passwordEncoder.matches(request.getVerifier(), provider.getResetVerifierHash())) {
+                throw new IllegalArgumentException("Enlace inválido (Verificación de seguridad fallida).");
+            }
+
+            // A.3 Actualizar Password
+            provider.setPassword(passwordEncoder.encode(request.getNewPassword()));
+
+            // A.4 Limpiar Tokens (Single Use)
+            provider.setResetSelector(null);
+            provider.setResetVerifierHash(null);
+            provider.setResetTokenExpiresAt(null);
+            providerRepository.save(provider);
+
+            // A.5 Notificar
+            notificationService.sendPasswordChangedAlert(provider.getEmail(), provider.getName(), time, "Navegador Web");
+            
+            log.info("✅ Contraseña actualizada (Provider) ID: {}", provider.getId());
+            return;
+        }
+
+        // --------------------------------------------------------------------
+        // B. INTENTAR COMO CONSUMER (¡NUEVO!)
+        // --------------------------------------------------------------------
+        var consumerOpt = consumerRepository.findByResetSelector(request.getSelector()); // Requiere cambio en Repo
+        
+        if (consumerOpt.isPresent()) {
+            Consumer consumer = consumerOpt.get();
+
+            // B.1 Validar Expiración
+            if (consumer.getResetTokenExpiresAt() == null || consumer.getResetTokenExpiresAt().isBefore(LocalDateTime.now())) {
+                throw new IllegalArgumentException("El enlace ha expirado. Solicita uno nuevo.");
+            }
+
+            // B.2 Validar Verifier vs Hash
+            if (!passwordEncoder.matches(request.getVerifier(), consumer.getResetVerifierHash())) {
+                throw new IllegalArgumentException("Enlace inválido (Verificación de seguridad fallida).");
+            }
+
+            // B.3 Actualizar Password
+            consumer.setPassword(passwordEncoder.encode(request.getNewPassword()));
+
+            // B.4 Limpiar Tokens
+            consumer.setResetSelector(null);
+            consumer.setResetVerifierHash(null);
+            consumer.setResetTokenExpiresAt(null);
+            consumerRepository.save(consumer);
+
+            // B.5 Notificar
+            notificationService.sendPasswordChangedAlert(consumer.getEmail(), consumer.getName(), time, "Navegador Web");
+
+            log.info("✅ Contraseña actualizada (Consumer) ID: {}", consumer.getId());
+            return;
+        }
+
+        // --------------------------------------------------------------------
+        // C. NO ENCONTRADO
+        // --------------------------------------------------------------------
+        throw new IllegalArgumentException("El enlace es inválido o no existe.");
     }
+
 
     @Transactional(readOnly = true)
     public ProviderStatusResponse getProviderStatus(Long providerId) {

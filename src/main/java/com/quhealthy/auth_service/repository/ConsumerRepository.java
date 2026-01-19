@@ -10,4 +10,7 @@ public interface ConsumerRepository extends JpaRepository<Consumer, Long> {
     
     // 👇 AGREGA ESTA LÍNEA OBLIGATORIAMENTE
     Optional<Consumer> findByEmailVerificationToken(String token);
+
+    Optional<Consumer> findByResetSelector(String selector);
+
 }
