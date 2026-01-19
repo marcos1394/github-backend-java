@@ -17,7 +17,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import com.quhealthy.auth_service.dto.ForgotPasswordRequest;
 import com.quhealthy.auth_service.dto.ResetPasswordRequest;
-
+import com.quhealthy.auth_service.dto.RegisterConsumerRequest;
+import com.quhealthy.auth_service.model.Consumer;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -234,4 +235,28 @@ public class AuthController {
         }
     }
 
+    /**
+     * Endpoint para Registro de Consumidores (Pacientes).
+     * Ruta: POST /api/auth/consumer/register
+     */
+    @PostMapping("/consumer/register")
+    public ResponseEntity<AuthResponse> registerConsumer(@Valid @RequestBody RegisterConsumerRequest request) {
+        
+        // 1. Llamada al servicio (Guarda en BD y envía email)
+        Consumer newConsumer = authService.registerConsumer(request);
+        
+        // 2. Construimos la respuesta USANDO los datos reales del objeto guardado
+        AuthResponse response = AuthResponse.builder()
+                .message("Registro exitoso. Hemos enviado un correo de verificación a " + newConsumer.getEmail()) // ✅ Usamos el email real
+                .token(null) // Seguridad: No damos token hasta que verifique
+                .status(AuthResponse.AuthStatus.builder()
+                        .isEmailVerified(newConsumer.isEmailVerified()) // ✅ Usamos el estado real (false)
+                        .isPhoneVerified(false) // Los consumers por defecto no piden teléfono al inicio
+                        .onboardingComplete(true) // Asumimos true por defecto para pacientes
+                        .hasActivePlan(false)
+                        .build())
+                .build();
+
+        return new ResponseEntity<>(response, HttpStatus.CREATED);
+    }
 }

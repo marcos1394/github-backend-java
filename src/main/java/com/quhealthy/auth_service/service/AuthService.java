@@ -5,6 +5,7 @@ import com.quhealthy.auth_service.dto.ForgotPasswordRequest;
 import com.quhealthy.auth_service.dto.LoginRequest;
 
 import com.quhealthy.auth_service.dto.ProviderStatusResponse;
+import com.quhealthy.auth_service.dto.RegisterConsumerRequest;
 import com.quhealthy.auth_service.dto.RegisterProviderRequest;
 import com.quhealthy.auth_service.dto.ResendVerificationRequest;
 import com.quhealthy.auth_service.dto.ResetPasswordRequest;
@@ -40,7 +41,7 @@ public class AuthService {
     private final PlanRepository planRepository;
     private final JwtService jwtService;
     private final ProviderCourseRepository courseRepository;
-
+    private final ConsumerRepository consumerRepository;
     // --- Servicios Externos ---
     private final PasswordEncoder passwordEncoder; // BCrypt
     private final NotificationService notificationService; // Tu servicio de notificaciones
@@ -585,6 +586,46 @@ public class AuthService {
         return providerRepository.findByEmail(email).orElse(null);
     }
 
+    // ========================================================================
+    // 9. REGISTRO DE CONSUMIDOR (PACIENTE)
+    // ========================================================================
+    @Transactional
+    public Consumer registerConsumer(RegisterConsumerRequest request) {
+        log.info("👤 [AuthService] Registrando nuevo consumidor: {}", request.getEmail());
+
+        // 1. Validar duplicados (Revisamos ambas tablas para evitar colisiones si se comparte login)
+        if (providerRepository.existsByEmail(request.getEmail()) || 
+            consumerRepository.existsByEmail(request.getEmail())) {
+            throw new IllegalArgumentException("El correo electrónico ya está registrado.");
+        }
+
+        // 2. Crear Entidad
+        Consumer consumer = new Consumer();
+        consumer.setName(request.getName());
+        consumer.setEmail(request.getEmail());
+        consumer.setPassword(passwordEncoder.encode(request.getPassword()));
+        consumer.setRole(Role.CONSUMER);
+        
+        // Configuraciones por defecto
+        consumer.setEmailNotificationsEnabled(true);
+        consumer.setPreferredLanguage("es");
+
+        // 3. Generar Token de Verificación de Email
+        String verificationToken = UUID.randomUUID().toString();
+        consumer.setEmailVerificationToken(verificationToken);
+        consumer.setEmailVerificationExpires(LocalDateTime.now().plusHours(24));
+        consumer.setEmailVerified(false); // Seguridad primero
+
+        // 4. Guardar
+        Consumer savedConsumer = consumerRepository.save(consumer);
+
+        // 5. Enviar Correo de Verificación (Reutilizamos la lógica existente)
+        String verifyLink = frontendUrl + "/verify-email?token=" + verificationToken;
+        notificationService.sendVerificationEmail(savedConsumer.getEmail(), savedConsumer.getName(), verifyLink);
+
+        log.info("✅ Consumidor registrado exitosamente. ID: {}", savedConsumer.getId());
+        return savedConsumer;
+    }
 
     /**
      * Helper para formatear límites del plan de forma segura.
