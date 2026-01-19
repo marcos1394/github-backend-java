@@ -4,7 +4,6 @@ import com.quhealthy.auth_service.dto.AuthResponse;
 import com.quhealthy.auth_service.dto.ConsumerStatusResponse;
 import com.quhealthy.auth_service.dto.ForgotPasswordRequest;
 import com.quhealthy.auth_service.dto.LoginRequest;
-
 import com.quhealthy.auth_service.dto.ProviderStatusResponse;
 import com.quhealthy.auth_service.dto.RegisterConsumerRequest;
 import com.quhealthy.auth_service.dto.RegisterProviderRequest;
@@ -12,6 +11,9 @@ import com.quhealthy.auth_service.dto.ResendVerificationRequest;
 import com.quhealthy.auth_service.dto.ResetPasswordRequest;
 import com.quhealthy.auth_service.dto.UserContextResponse;
 import com.quhealthy.auth_service.model.*;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.AuthenticationException;
 import com.quhealthy.auth_service.model.enums.*;
 // Inyectar esto
 import com.quhealthy.auth_service.repository.*;
@@ -44,6 +46,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final ProviderCourseRepository courseRepository;
     private final ConsumerRepository consumerRepository;
+    private final AuthenticationManager authenticationManager;
     // --- Servicios Externos ---
     private final PasswordEncoder passwordEncoder; // BCrypt
     private final NotificationService notificationService; // Tu servicio de notificaciones
@@ -199,78 +202,105 @@ public class AuthService {
     }
 
     // ========================================================================
-    // 3. LOGIN (AUTENTICACIÓN)
+    // 3. LOGIN (POLIMÓRFICO: PROVIDER O CONSUMER)
     // ========================================================================
-    @Transactional(readOnly = true) // Solo lectura para login es más eficiente
     public AuthResponse login(LoginRequest request) {
         log.info("🔐 [AuthService] Iniciando login para: {}", request.getIdentifier());
 
-        // 1. Buscar al proveedor por email O teléfono
-        Provider provider = providerRepository.findByEmailOrPhone(request.getIdentifier())
-                .orElseThrow(() -> new IllegalArgumentException("Credenciales incorrectas.")); // Mensaje genérico por seguridad
-
-        // 2. Verificar la contraseña (BCrypt)
-        if (!passwordEncoder.matches(request.getPassword(), provider.getPassword())) {
-            log.warn("⚠️ Login fallido: Contraseña incorrecta para {}", request.getIdentifier());
+        // 1. AUTENTICACIÓN UNIFICADA (Spring Security)
+        // Esto usa tu ApplicationConfig para buscar en Provider Y Consumer automáticamente.
+        try {
+            authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(
+                    request.getIdentifier(),
+                    request.getPassword()
+                )
+            );
+        } catch (AuthenticationException e) {
+            log.warn("⚠️ Login fallido: Credenciales inválidas para {}", request.getIdentifier());
             throw new IllegalArgumentException("Credenciales incorrectas.");
         }
 
-        // 3. Verificar si el email O el teléfono están verificados
-        if (!provider.isEmailVerified() && !provider.isPhoneVerified()) {
-            log.warn("⚠️ Login bloqueado: Usuario no verificado.");
-            throw new IllegalArgumentException("Por favor, verifica tu correo o teléfono para iniciar sesión.");
-        }
+        // 2. SI LLEGAMOS AQUÍ, LA CONTRASEÑA ES CORRECTA ✅
+        // Ahora debemos identificar QUIÉN es el usuario para armar su respuesta específica.
 
-        // --- LÓGICA 2FA ---
-        // 4. Verificar si 2FA está activado
-        if (Boolean.TRUE.equals(provider.getIsTwoFactorEnabled())) { // Boolean safe check
-            log.info("🛡️ 2FA activado para usuario ID: {}. Generando token parcial.", provider.getId());
+        // --- CASO A: ES UN PROVEEDOR ---
+        var providerOpt = providerRepository.findByEmail(request.getIdentifier());
+        if (providerOpt.isPresent()) {
+            Provider provider = providerOpt.get();
 
-            String partialToken = jwtService.generatePartialToken(provider.getId(), provider.getRole().name());
+            // A.1 Validar Verificación (Email/Teléfono)
+            if (!provider.isEmailVerified() && !provider.isPhoneVerified()) {
+                throw new IllegalArgumentException("Por favor, verifica tu correo o teléfono para iniciar sesión.");
+            }
 
-            // Devolvemos respuesta de "2FA Requerido"
+            // A.2 Lógica 2FA (Tal cual la tenías)
+            if (Boolean.TRUE.equals(provider.getIsTwoFactorEnabled())) {
+                log.info("🛡️ 2FA activado para Provider ID: {}", provider.getId());
+                String partialToken = jwtService.generatePartialToken(provider.getId(), provider.getRole().name());
+                
+                return AuthResponse.builder()
+                        .partialToken(partialToken)
+                        .message("Se requiere autenticación de dos factores.")
+                        .status(AuthResponse.AuthStatus.builder().twoFactorRequired(true).build())
+                        .build();
+            }
+
+            // A.3 Lógica de Planes (Tal cual la tenías)
+            boolean hasActivePlan = false;
+            if (provider.getPlans() != null) {
+                hasActivePlan = provider.getPlans().stream().anyMatch(sub -> 
+                    (sub.getStatus() == PlanStatus.ACTIVE || sub.getStatus() == PlanStatus.TRIAL) &&
+                    sub.getEndDate().isAfter(LocalDateTime.now())
+                );
+            }
+
+            // A.4 Generar Token Provider
+            String jwtToken = jwtService.generateToken(provider.getId(), provider.getEmail(), provider.getRole().name());
+
             return AuthResponse.builder()
-                    .token(null)
-                    .partialToken(partialToken)
-                    .message("Se requiere autenticación de dos factores.")
+                    .token(jwtToken)
+                    .message("Inicio de sesión exitoso (Provider).")
                     .status(AuthResponse.AuthStatus.builder()
-                            .twoFactorRequired(true)
+                            .hasActivePlan(hasActivePlan)
+                            .onboardingComplete(provider.isOnboardingComplete())
+                            .isEmailVerified(provider.isEmailVerified())
+                            .isPhoneVerified(provider.isPhoneVerified())
+                            .twoFactorRequired(false)
                             .build())
                     .build();
         }
 
-        // 5. Si 2FA NO está activado, proceder con Login Normal
-        log.info("✅ Login exitoso. Generando sesión completa.");
+        // --- CASO B: ES UN CONSUMIDOR (NUEVO) ---
+        var consumerOpt = consumerRepository.findByEmail(request.getIdentifier());
+        if (consumerOpt.isPresent()) {
+            Consumer consumer = consumerOpt.get();
 
-        // Validar Plan Activo (Lógica equivalente a tu .find en JS)
-        // Buscamos si tiene algún plan que NO haya expirado y que esté activo/trial
-        boolean hasActivePlan = false;
-        if (provider.getPlans() != null) {
-            hasActivePlan = provider.getPlans().stream().anyMatch(sub -> 
-                (sub.getStatus() == PlanStatus.ACTIVE || sub.getStatus() == PlanStatus.TRIAL) &&
-                sub.getEndDate().isAfter(LocalDateTime.now())
-            );
+            // B.1 Validar Verificación
+            if (!consumer.isEmailVerified()) {
+                throw new IllegalArgumentException("Por favor, verifica tu correo electrónico.");
+            }
+
+            // B.2 Generar Token Consumer
+            // Usamos el mismo método generateToken (asegúrate que acepte los argumentos)
+            String jwtToken = jwtService.generateToken(consumer.getId(), consumer.getEmail(), consumer.getRole().name());
+
+            // B.3 Respuesta Consumer (Más simple)
+            return AuthResponse.builder()
+                    .token(jwtToken)
+                    .message("Inicio de sesión exitoso (Paciente).")
+                    .status(AuthResponse.AuthStatus.builder()
+                            .hasActivePlan(false) // Pacientes no suelen tener plan SaaS
+                            .onboardingComplete(true) // Asumimos true o checkeamos perfil
+                            .isEmailVerified(consumer.isEmailVerified())
+                            .isPhoneVerified(false)
+                            .twoFactorRequired(false)
+                            .build())
+                    .build();
         }
 
-        // Generar Token Completo
-        String jwtToken = jwtService.generateToken(
-            provider.getId(), 
-            provider.getEmail(), 
-            provider.getRole().name()
-        );
-
-        return AuthResponse.builder()
-                .token(jwtToken)
-                .partialToken(null)
-                .message("Inicio de sesión exitoso.")
-                .status(AuthResponse.AuthStatus.builder()
-                        .hasActivePlan(hasActivePlan)
-                        .onboardingComplete(provider.isOnboardingComplete())
-                        .isEmailVerified(provider.isEmailVerified())
-                        .isPhoneVerified(provider.isPhoneVerified())
-                        .twoFactorRequired(false)
-                        .build())
-                .build();
+        // Si pasó la autenticación pero no lo encontramos en BD (Caso muy raro)
+        throw new IllegalArgumentException("Error de inconsistencia de usuario.");
     }
 
 
