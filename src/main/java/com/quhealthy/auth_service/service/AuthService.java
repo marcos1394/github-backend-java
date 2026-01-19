@@ -1,6 +1,7 @@
 package com.quhealthy.auth_service.service;
 
 import com.quhealthy.auth_service.dto.AuthResponse;
+import com.quhealthy.auth_service.dto.ConsumerStatusResponse;
 import com.quhealthy.auth_service.dto.ForgotPasswordRequest;
 import com.quhealthy.auth_service.dto.LoginRequest;
 
@@ -9,6 +10,7 @@ import com.quhealthy.auth_service.dto.RegisterConsumerRequest;
 import com.quhealthy.auth_service.dto.RegisterProviderRequest;
 import com.quhealthy.auth_service.dto.ResendVerificationRequest;
 import com.quhealthy.auth_service.dto.ResetPasswordRequest;
+import com.quhealthy.auth_service.dto.UserContextResponse;
 import com.quhealthy.auth_service.model.*;
 import com.quhealthy.auth_service.model.enums.*;
 // Inyectar esto
@@ -626,6 +628,55 @@ public class AuthService {
         log.info("✅ Consumidor registrado exitosamente. ID: {}", savedConsumer.getId());
         return savedConsumer;
     }
+
+
+    // ========================================================================
+    // 10. OBTENER CONTEXTO DE USUARIO (PROVIDER O CONSUMER)
+    // ========================================================================
+    @Transactional(readOnly = true)
+    public UserContextResponse getUserContext(String email) {
+        
+        // A. Intentar buscar como PROVIDER
+        var providerOpt = providerRepository.findByEmail(email);
+        if (providerOpt.isPresent()) {
+            // Reutilizamos tu lógica existente compleja para providers
+            ProviderStatusResponse providerStatus = getProviderStatus(providerOpt.get().getId());
+            
+            return UserContextResponse.builder()
+                    .role("PROVIDER")
+                    .providerData(providerStatus)
+                    .consumerData(null)
+                    .build();
+        }
+
+        // B. Intentar buscar como CONSUMER
+        var consumerOpt = consumerRepository.findByEmail(email); // Asegúrate de tener consumerRepository inyectado
+        if (consumerOpt.isPresent()) {
+            Consumer consumer = consumerOpt.get();
+            
+            // Construimos respuesta ligera para Consumer
+            ConsumerStatusResponse consumerStatus = ConsumerStatusResponse.builder()
+                    .id(consumer.getId())
+                    .name(consumer.getName())
+                    .email(consumer.getEmail())
+                    .role("CONSUMER")
+                    .profileImageUrl(consumer.getProfileImageUrl())
+                    .preferredLanguage(consumer.getPreferredLanguage())
+                    .emailVerified(consumer.isEmailVerified())
+                    .phoneVerified(false) // O consumer.isPhoneVerified() si agregas ese campo
+                    .build();
+
+            return UserContextResponse.builder()
+                    .role("CONSUMER")
+                    .providerData(null)
+                    .consumerData(consumerStatus)
+                    .build();
+        }
+
+        // C. No encontrado
+        return null;
+    }
+
 
     /**
      * Helper para formatear límites del plan de forma segura.

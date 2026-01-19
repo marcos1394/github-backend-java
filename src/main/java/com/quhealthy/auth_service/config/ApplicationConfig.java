@@ -1,5 +1,6 @@
 package com.quhealthy.auth_service.config;
 
+import com.quhealthy.auth_service.repository.ConsumerRepository; // 👈 NUEVO IMPORT
 import com.quhealthy.auth_service.repository.ProviderRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
@@ -18,30 +19,40 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 public class ApplicationConfig {
 
     private final ProviderRepository providerRepository;
+    private final ConsumerRepository consumerRepository; // 👈 INYECCIÓN DEL NUEVO REPO
 
     /**
-     * 1. USER DETAILS SERVICE
+     * 1. USER DETAILS SERVICE (UNIFICADO)
+     * Busca primero en Providers, si no encuentra, busca en Consumers.
      */
     @Bean
     public UserDetailsService userDetailsService() {
-        return username -> providerRepository.findByEmail(username)
-                .orElseThrow(() -> new UsernameNotFoundException("Usuario no encontrado con email: " + username));
+        return username -> {
+            // A. Intentar buscar como Provider
+            var provider = providerRepository.findByEmail(username);
+            if (provider.isPresent()) {
+                return provider.get();
+            }
+
+            // B. Intentar buscar como Consumer
+            var consumer = consumerRepository.findByEmail(username);
+            if (consumer.isPresent()) {
+                return consumer.get();
+            }
+
+            // C. No existe en ninguno
+            throw new UsernameNotFoundException("Usuario no encontrado con email: " + username);
+        };
     }
 
     /**
      * 2. AUTHENTICATION PROVIDER
-     * CORRECCIÓN: Usamos el constructor que acepta UserDetailsService
-     * (Basado en tu código fuente descompilado)
      */
     @Bean
     public AuthenticationProvider authenticationProvider() {
-        // ✅ Pasamos el userDetailsService() DIRECTAMENTE al constructor
+        // Usamos el constructor corregido que acepta el servicio unificado
         DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider(userDetailsService());
-        
-        // Ya no llamamos a setUserDetailsService porque ya lo pasamos arriba.
-        // Solo configuramos el encoder:
         authProvider.setPasswordEncoder(passwordEncoder());
-        
         return authProvider;
     }
 

@@ -2,7 +2,6 @@ package com.quhealthy.auth_service.controller;
 
 import com.quhealthy.auth_service.dto.AuthResponse;
 import com.quhealthy.auth_service.dto.LoginRequest;
-import com.quhealthy.auth_service.dto.ProviderStatusResponse;
 import com.quhealthy.auth_service.dto.RegisterProviderRequest;
 import com.quhealthy.auth_service.model.Provider;
 import com.quhealthy.auth_service.dto.VerifyPhoneRequest; // Asegúrate de tener este import
@@ -19,6 +18,7 @@ import com.quhealthy.auth_service.dto.ForgotPasswordRequest;
 import com.quhealthy.auth_service.dto.ResetPasswordRequest;
 import com.quhealthy.auth_service.dto.RegisterConsumerRequest;
 import com.quhealthy.auth_service.model.Consumer;
+import com.quhealthy.auth_service.dto.UserContextResponse; // 👈 IMPORTANTE
 import java.util.HashMap;
 import java.util.Map;
 
@@ -141,27 +141,35 @@ public class AuthController {
     }
 
     /**
-     * Endpoint Crítico: Obtener el contexto del usuario actual.
+     * Endpoint Crítico: Obtener el contexto del usuario actual (Polimórfico).
      * GET /api/auth/me
      * Header: Authorization: Bearer <token>
+     * * Retorna: UserContextResponse (que puede contener data de Provider o Consumer)
      */
     @GetMapping("/me")
-    public ResponseEntity<ProviderStatusResponse> getCurrentUser() {
+    public ResponseEntity<UserContextResponse> getCurrentUser() {
+        
+        // 1. Obtener la autenticación del contexto de seguridad
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         
+        // 2. Validar que no sea anónimo
         if (authentication == null || !authentication.isAuthenticated() || "anonymousUser".equals(authentication.getPrincipal())) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        String email = authentication.getName();
-        Provider provider = authService.findByEmail(email);
+        String email = authentication.getName(); // El email viene del Token JWT
         
-        if (provider == null) {
+        // 3. Llamar al servicio "inteligente" que busca en ambas tablas
+        // Ya no buscamos "Provider", buscamos "Contexto"
+        UserContextResponse context = authService.getUserContext(email);
+        
+        // 4. Si no encuentra ni proveedor ni consumidor, es un 404
+        if (context == null) {
             return ResponseEntity.notFound().build();
         }
 
-        ProviderStatusResponse status = authService.getProviderStatus(provider.getId());
-        return ResponseEntity.ok(status);
+        // 5. Devolver la respuesta unificada
+        return ResponseEntity.ok(context);
     }
 
     /**
