@@ -347,49 +347,95 @@ public class AuthService {
 
 
     // ========================================================================
-    // 4. SOLICITAR RESETEO (FORGOT PASSWORD)
+    // 4. SOLICITAR RESETEO (FORGOT PASSWORD) - POLIMÓRFICO
     // ========================================================================
     @Transactional
     public void requestPasswordReset(ForgotPasswordRequest request) {
         log.info("🚀 [AuthService] Solicitud de reseteo para: {}", request.getEmail());
 
-        // 1. Buscar usuario (Si no existe, no hacemos nada por seguridad - User Enumeration Prevention)
-        Provider provider = providerRepository.findByEmail(request.getEmail()).orElse(null);
+        // Generador seguro (lo instanciamos una vez para usarlo en cualquiera de los dos casos)
+        SecureRandom random = new SecureRandom();
 
-        if (provider != null) {
-            // 2. Generar Selector (16 bytes) y Verifier (32 bytes)
-            SecureRandom random = new SecureRandom();
+        // --------------------------------------------------------------------
+        // A. INTENTAR COMO PROVIDER
+        // --------------------------------------------------------------------
+        var providerOpt = providerRepository.findByEmail(request.getEmail());
+        
+        if (providerOpt.isPresent()) {
+            Provider provider = providerOpt.get();
+
+            // 1. Generar Tokens (Selector + Verifier)
             byte[] selectorBytes = new byte[16];
             byte[] verifierBytes = new byte[32];
             random.nextBytes(selectorBytes);
             random.nextBytes(verifierBytes);
 
-            // Convertir a Hex (Equivalente a .toString('hex') de Node)
             String selector = HexFormat.of().formatHex(selectorBytes);
             String verifier = HexFormat.of().formatHex(verifierBytes);
 
-            // 3. Hashear el Verifier (Usamos passwordEncoder que ya es BCrypt)
+            // 2. Hashear y Guardar
             String verifierHash = passwordEncoder.encode(verifier);
-
-            // 4. Guardar en BD
+            
             provider.setResetSelector(selector);
             provider.setResetVerifierHash(verifierHash);
             provider.setResetTokenExpiresAt(LocalDateTime.now().plusMinutes(60)); // 1 hora
             providerRepository.save(provider);
 
-            // 5. Construir Link y Enviar Correo
-            // Link: https://quhealthy.com/reset-password?selector=...&verifier=...&role=provider
+            // 3. Enviar Correo (Nota el &role=provider)
+            // Usa this.frontendUrl cuando tengas el front, por ahora hardcode si quieres probar
+            String baseUrl = "https://auth-service-629639328783.us-central1.run.app/api/auth"; // O tu URL de frontend
+            
+            // En realidad el link debe apuntar a tu FRONTEND, no al backend.
+            // Ejemplo: https://quhealthy.com/reset-password?selector=...
             String link = String.format("%s/reset-password?selector=%s&verifier=%s&role=provider", 
                     frontendUrl, selector, verifier);
 
-            // Usamos la plantilla 'password-reset-request' que ya tienes
             notificationService.sendPasswordResetRequest(provider.getEmail(), link);
-            
-            log.info("✅ Tokens generados y correo enviado a {}", request.getEmail());
-        } else {
-            log.warn("ℹ️ Email no encontrado: {}. Silenciando respuesta.", request.getEmail());
+            log.info("✅ Correo de reseteo enviado a Provider: {}", request.getEmail());
+            return;
         }
+
+        // --------------------------------------------------------------------
+        // B. INTENTAR COMO CONSUMER (¡NUEVO!)
+        // --------------------------------------------------------------------
+        var consumerOpt = consumerRepository.findByEmail(request.getEmail());
+
+        if (consumerOpt.isPresent()) {
+            Consumer consumer = consumerOpt.get();
+
+            // 1. Generar Tokens
+            byte[] selectorBytes = new byte[16];
+            byte[] verifierBytes = new byte[32];
+            random.nextBytes(selectorBytes);
+            random.nextBytes(verifierBytes);
+
+            String selector = HexFormat.of().formatHex(selectorBytes);
+            String verifier = HexFormat.of().formatHex(verifierBytes);
+
+            // 2. Hashear y Guardar
+            // IMPORTANTE: Asegúrate de tener estos campos en tu entidad Consumer y sus setters
+            String verifierHash = passwordEncoder.encode(verifier);
+            
+            consumer.setResetSelector(selector);
+            consumer.setResetVerifierHash(verifierHash);
+            consumer.setResetTokenExpiresAt(LocalDateTime.now().plusMinutes(60));
+            consumerRepository.save(consumer);
+
+            // 3. Enviar Correo (Nota el &role=consumer)
+            String link = String.format("%s/reset-password?selector=%s&verifier=%s&role=consumer", 
+                    frontendUrl, selector, verifier);
+
+            notificationService.sendPasswordResetRequest(consumer.getEmail(), link);
+            log.info("✅ Correo de reseteo enviado a Consumer: {}", request.getEmail());
+            return;
+        }
+
+        // --------------------------------------------------------------------
+        // C. NO ENCONTRADO (SILENCIOSO)
+        // --------------------------------------------------------------------
+        log.warn("ℹ️ Email no encontrado para reseteo: {}. Silenciando respuesta por seguridad.", request.getEmail());
     }
+
 
     // ========================================================================
     // 5. CAMBIAR CONTRASEÑA (RESET PASSWORD)

@@ -9,6 +9,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 
@@ -41,6 +42,15 @@ public class Consumer extends BaseUser implements UserDetails { // 👈 IMPLEMEN
     @Column(name = "marketing_emails_opt_in")
     private boolean marketingEmailsOptIn = false;
 
+    @Column(name = "reset_selector")
+    private String resetSelector;
+
+    @Column(name = "reset_verifier_hash")
+    private String resetVerifierHash;
+
+    @Column(name = "reset_token_expires_at")
+    private LocalDateTime resetTokenExpiresAt;
+
     // =================================================================
     // 👮 IMPLEMENTACIÓN DE USER DETAILS (Igual que Provider)
     // =================================================================
@@ -66,4 +76,6 @@ public class Consumer extends BaseUser implements UserDetails { // 👈 IMPLEMEN
 
     @Override
     public boolean isEnabled() { return true; }
+
+
 }
