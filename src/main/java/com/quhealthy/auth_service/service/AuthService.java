@@ -175,32 +175,74 @@ public class AuthService {
     }
 
     // ========================================================================
-    // 2. VERIFICACIÓN DE EMAIL (¡ESTO FALTABA!)
+    // 2. VERIFICACIÓN DE EMAIL (POLIMÓRFICO: PROVIDER Y CONSUMER)
     // ========================================================================
     public String verifyEmail(String token) {
-        Provider provider = providerRepository.findByEmailVerificationToken(token)
-                .orElseThrow(() -> new IllegalArgumentException("Token inválido o expirado."));
+        
+        // --------------------------------------------------------------------
+        // CASO A: BUSCAR EN PROVIDERS
+        // --------------------------------------------------------------------
+        var providerOpt = providerRepository.findByEmailVerificationToken(token);
+        
+        if (providerOpt.isPresent()) {
+            Provider provider = providerOpt.get();
 
-        if (provider.isEmailVerified()) {
-            return "El correo ya ha sido verificado anteriormente.";
+            if (provider.isEmailVerified()) {
+                return "El correo ya ha sido verificado anteriormente.";
+            }
+            
+            // Validar expiración (Ajusta el nombre del getter si es diferente en tu entidad)
+            if (provider.getEmailVerificationExpires() != null && 
+                provider.getEmailVerificationExpires().isBefore(LocalDateTime.now())) {
+                throw new IllegalArgumentException("El enlace de verificación ha expirado.");
+            }
+
+            // Activar Provider
+            provider.setEmailVerified(true);
+            provider.setEmailVerificationToken(null);
+            provider.setEmailVerificationExpires(null);
+            providerRepository.save(provider);
+            
+            log.info("✅ Email verificado para Provider ID: {}", provider.getId());
+            return "Correo de proveedor verificado exitosamente.";
         }
 
-        if (provider.getEmailVerificationExpires().isBefore(LocalDateTime.now())) {
-            throw new IllegalArgumentException("El enlace de verificación ha expirado. Por favor solicita uno nuevo.");
+        // --------------------------------------------------------------------
+        // CASO B: BUSCAR EN CONSUMERS (¡NUEVO!)
+        // --------------------------------------------------------------------
+        var consumerOpt = consumerRepository.findByEmailVerificationToken(token); // Requiere el cambio en el Repo
+        
+        if (consumerOpt.isPresent()) {
+            Consumer consumer = consumerOpt.get();
+
+            if (consumer.isEmailVerified()) {
+                return "El correo ya ha sido verificado anteriormente.";
+            }
+
+            // Validar expiración
+            if (consumer.getEmailVerificationExpires() != null && 
+                consumer.getEmailVerificationExpires().isBefore(LocalDateTime.now())) {
+                throw new IllegalArgumentException("El enlace de verificación ha expirado.");
+            }
+
+            // Activar Consumer
+            consumer.setEmailVerified(true);
+            consumer.setEmailVerificationToken(null);
+            consumer.setEmailVerificationExpires(null); // Asegúrate de que el getter se llame así en Consumer.java
+            consumerRepository.save(consumer);
+            
+            log.info("✅ Email verificado para Consumer ID: {}", consumer.getId());
+            return "Correo de paciente verificado exitosamente.";
         }
 
-        // Activar
-        provider.setEmailVerified(true);
-        provider.setEmailVerificationToken(null); // Invalidar token por seguridad
-        provider.setEmailVerificationExpires(null);
-        
-        providerRepository.save(provider);
-        
-        log.info("✅ Email verificado para provider ID: {}", provider.getId());
-        
-        return "Correo verificado exitosamente.";
+        // --------------------------------------------------------------------
+        // CASO C: NO ENCONTRADO
+        // --------------------------------------------------------------------
+        throw new IllegalArgumentException("Token inválido o expirado.");
     }
 
+
+    
     // ========================================================================
     // 3. LOGIN (POLIMÓRFICO: PROVIDER O CONSUMER)
     // ========================================================================
