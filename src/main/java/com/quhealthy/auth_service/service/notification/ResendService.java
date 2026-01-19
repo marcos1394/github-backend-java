@@ -16,7 +16,7 @@ public class ResendService {
     private String apiKey;
 
     // Configurable en application.properties, con valor por defecto para desarrollo
-    @Value("${resend.from.email:QuHealthy <onboarding@resend.dev>}")
+    @Value("${resend.from.email}") // AHORA (Sin default, obliga a usar el secreto)
     private String fromEmail;
 
     private Resend resendClient;
