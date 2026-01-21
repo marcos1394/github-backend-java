@@ -7,6 +7,7 @@ import lombok.*;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
+import com.quhealthy.onboarding_service.model.enums.Archetype;
 
 @Data
 @Entity
