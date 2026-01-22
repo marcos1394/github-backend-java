@@ -25,6 +25,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.quhealthy.auth_service.service.security.JwtService; // Importamos el nuevo servicio
 import com.quhealthy.auth_service.service.security.GoogleAuthService;
+import com.quhealthy.auth_service.dto.SocialLoginRequest;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.security.SecureRandom;
