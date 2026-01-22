@@ -86,6 +86,8 @@ jobs:
               TWILIO_TOKEN=application_twilio_token:latest
               TWILIO_PHONE_NUMBER=application_twilio_phone:latest
               RESEND_FROM_EMAIL=RESEND_FROM_EMAIL:latest
+              GOOGLE_CLIENT_ID=application_google_client_id:latest
+              GOOGLE_CLIENT_SECRET=application_google_client_secret:latest
 
           # --- CONFIGURACIÓN ONBOARDING SERVICE ---
           - service-name: onboarding-service

@@ -24,6 +24,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.quhealthy.auth_service.service.security.JwtService; // Importamos el nuevo servicio
+import com.quhealthy.auth_service.service.security.GoogleAuthService;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.security.SecureRandom;
@@ -51,7 +52,7 @@ public class AuthService {
     // --- Servicios Externos ---
     private final PasswordEncoder passwordEncoder; // BCrypt
     private final NotificationService notificationService; // Tu servicio de notificaciones
-
+    private final GoogleAuthService googleAuthService; // 💉 Inyectado para Google Login
     // Variable de entorno para construir links (http://localhost:3000 o https://quhealthy.com)
     @Value("${app.frontend.url:http://localhost:3000}")
     private String frontendUrl;
@@ -875,6 +876,105 @@ public class AuthService {
 
         // C. No encontrado
         return null;
+    }
+
+
+    // ========================================================================
+    // 4. LOGIN CON GOOGLE (NUEVO MÉTODO)
+    // ========================================================================
+    @Transactional
+    public AuthResponse authenticateWithGoogle(SocialLoginRequest request) {
+        log.info("🌐 [Google] Procesando login con token OAuth.");
+
+        // 1. Verificar Token con Google (Extrae email de forma segura)
+        var payload = googleAuthService.verifyToken(request.getToken());
+        String email = payload.getEmail();
+        String name = (String) payload.get("name");
+
+        log.info("✅ [Google] Token válido para: {}", email);
+
+        // 2. Buscar si ya existe (Provider o Consumer)
+        var existingProvider = providerRepository.findByEmail(email);
+        var existingConsumer = consumerRepository.findByEmail(email);
+
+        if (existingProvider.isPresent()) {
+            // --- USUARIO EXISTE (LOGIN) ---
+            Provider provider = existingProvider.get();
+            log.info("👋 Bienvenido de nuevo Provider: {}", provider.getId());
+            
+            // Generar Token JWT directo (Google ya verificó identidad)
+            String jwtToken = jwtService.generateToken(provider.getId(), provider.getEmail(), provider.getRole().name());
+            
+            return AuthResponse.builder()
+                    .token(jwtToken)
+                    .message("Inicio de sesión exitoso con Google.")
+                    .status(AuthResponse.AuthStatus.builder()
+                            .onboardingComplete(provider.isOnboardingComplete())
+                            .isEmailVerified(true) // Google verified
+                            .build())
+                    .build();
+
+        } else if (existingConsumer.isPresent()) {
+             // --- CONSUMER EXISTE (LOGIN) ---
+             Consumer consumer = existingConsumer.get();
+             String jwtToken = jwtService.generateToken(consumer.getId(), consumer.getEmail(), consumer.getRole().name());
+             
+             return AuthResponse.builder()
+                    .token(jwtToken)
+                    .message("Inicio de sesión exitoso con Google.")
+                    .status(AuthResponse.AuthStatus.builder()
+                            .onboardingComplete(true)
+                            .isEmailVerified(true)
+                            .build())
+                    .build();
+        } else {
+            // --- USUARIO NO EXISTE (REGISTRO AUTOMÁTICO COMO PROVIDER) ---
+            // Asumimos que quien llega por la landing principal es un Proveedor.
+            log.info("🆕 Creando nuevo Provider desde Google: {}", email);
+
+            Provider provider = new Provider();
+            provider.setName(name);
+            provider.setEmail(email);
+            provider.setPassword(passwordEncoder.encode(UUID.randomUUID().toString())); // Password aleatorio seguro
+            provider.setRole(Role.PROVIDER);
+            provider.setParentCategoryId(1L); // Default (Health)
+            provider.setAcceptTerms(true);
+            provider.setPlanStatus(PlanStatus.TRIAL);
+            provider.setTrialExpiresAt(LocalDateTime.now().plusDays(14));
+            provider.setOnboardingComplete(false);
+            provider.setEmailVerified(true); // ¡Importante! Google ya verificó esto
+            
+            provider = providerRepository.save(provider);
+
+            // Crear registros satélite mínimos (Plan, Marketplace, etc.)
+            // Reutilizamos la lógica de crear Plan Trial
+            Plan freePlan = planRepository.findById(5L).orElseThrow();
+            ProviderPlan plan = new ProviderPlan();
+            plan.setProvider(provider);
+            plan.setPlan(freePlan);
+            plan.setStatus(PlanStatus.TRIAL);
+            plan.setStartDate(LocalDateTime.now());
+            plan.setEndDate(provider.getTrialExpiresAt());
+            providerPlanRepository.save(plan);
+            
+            ProviderMarketplace shop = new ProviderMarketplace();
+            shop.setProvider(provider);
+            shop.setStoreName("Tienda de " + name);
+            shop.setStoreSlug("tienda-" + provider.getId() + "-" + System.currentTimeMillis());
+            marketplaceRepository.save(shop);
+            
+            // Generar JWT
+            String jwtToken = jwtService.generateToken(provider.getId(), provider.getEmail(), provider.getRole().name());
+
+            return AuthResponse.builder()
+                    .token(jwtToken)
+                    .message("Registro con Google exitoso.")
+                    .status(AuthResponse.AuthStatus.builder()
+                            .onboardingComplete(false)
+                            .isEmailVerified(true)
+                            .build())
+                    .build();
+        }
     }
 
 

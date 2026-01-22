@@ -18,6 +18,7 @@ import com.quhealthy.auth_service.dto.ForgotPasswordRequest;
 import com.quhealthy.auth_service.dto.ResetPasswordRequest;
 import com.quhealthy.auth_service.dto.RegisterConsumerRequest;
 import com.quhealthy.auth_service.model.Consumer;
+import com.quhealthy.auth_service.dto.SocialLoginRequest;
 import com.quhealthy.auth_service.dto.UserContextResponse; // 👈 IMPORTANTE
 import java.util.HashMap;
 import java.util.Map;
@@ -266,5 +267,16 @@ public class AuthController {
                 .build();
 
         return new ResponseEntity<>(response, HttpStatus.CREATED);
+    }
+
+    /**
+     * Endpoint para Login/Registro con Google.
+     * POST /api/auth/social/google
+     */
+    @PostMapping("/social/google")
+    public ResponseEntity<AuthResponse> googleLogin(@Valid @RequestBody SocialLoginRequest request) {
+        // Llama al método polimórfico que ya implementaste en el servicio
+        AuthResponse response = authService.authenticateWithGoogle(request);
+        return ResponseEntity.ok(response);
     }
 }
