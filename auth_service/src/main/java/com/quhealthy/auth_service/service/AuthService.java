@@ -25,8 +25,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.quhealthy.auth_service.service.security.JwtService; // Importamos el nuevo servicio
 import com.quhealthy.auth_service.service.security.GoogleAuthService;
+import com.quhealthy.auth_service.service.security.FacebookAuthService; // 👈 Importar
 import com.quhealthy.auth_service.dto.SocialLoginRequest;
 import java.time.LocalDateTime;
+import com.restfb.types.User; // 👈 Importar modelo de Facebook
 import java.time.format.DateTimeFormatter;
 import java.security.SecureRandom;
 import java.util.HexFormat;
@@ -50,6 +52,7 @@ public class AuthService {
     private final ProviderCourseRepository courseRepository;
     private final ConsumerRepository consumerRepository;
     private final AuthenticationManager authenticationManager;
+    private final FacebookAuthService facebookAuthService; // 💉 Inyectar
     // --- Servicios Externos ---
     private final PasswordEncoder passwordEncoder; // BCrypt
     private final NotificationService notificationService; // Tu servicio de notificaciones
@@ -978,6 +981,107 @@ public class AuthService {
         }
     }
 
+
+
+// =================================================================
+    // 5. LOGIN CON FACEBOOK (NUEVO)
+    // =================================================================
+    @Transactional
+    public AuthResponse authenticateWithFacebook(SocialLoginRequest request) {
+        log.info("🌐 [Facebook] Procesando login.");
+
+        // 1. Obtener datos de Facebook
+        User fbUser = facebookAuthService.getUserData(request.getToken());
+        
+        String email = fbUser.getEmail();
+        String name = fbUser.getName();
+        
+        // --- VALIDACIÓN CRÍTICA DE EMAIL ---
+        // Facebook no siempre devuelve el email (si se registraron con teléfono).
+        // Para un sistema Enterprise, el email es el identificador único.
+        if (email == null || email.isBlank()) {
+            throw new IllegalArgumentException("Tu cuenta de Facebook no tiene un email principal asociado. Por favor usa Google o Registro por correo.");
+        }
+
+        log.info("✅ [Facebook] Usuario validado: {}", email);
+
+        // 2. Buscar o Crear (Lógica idéntica a Google)
+        var existingProvider = providerRepository.findByEmail(email);
+        var existingConsumer = consumerRepository.findByEmail(email);
+
+        if (existingProvider.isPresent()) {
+            // LOGIN PROVIDER
+            Provider provider = existingProvider.get();
+            String jwtToken = jwtService.generateToken(provider.getId(), provider.getEmail(), provider.getRole().name());
+            
+            return AuthResponse.builder()
+                    .token(jwtToken)
+                    .message("Inicio de sesión exitoso con Facebook.")
+                    .status(AuthResponse.AuthStatus.builder()
+                            .onboardingComplete(provider.isOnboardingComplete())
+                            .isEmailVerified(true) 
+                            .build())
+                    .build();
+
+        } else if (existingConsumer.isPresent()) {
+             // LOGIN CONSUMER
+             Consumer consumer = existingConsumer.get();
+             String jwtToken = jwtService.generateToken(consumer.getId(), consumer.getEmail(), consumer.getRole().name());
+             
+             return AuthResponse.builder()
+                    .token(jwtToken)
+                    .message("Inicio de sesión exitoso con Facebook.")
+                    .status(AuthResponse.AuthStatus.builder()
+                            .onboardingComplete(true)
+                            .isEmailVerified(true)
+                            .build())
+                    .build();
+        } else {
+            // REGISTRO AUTOMÁTICO (PROVIDER)
+            log.info("🆕 Creando nuevo Provider desde Facebook: {}", email);
+
+            Provider provider = new Provider();
+            provider.setName(name);
+            provider.setEmail(email);
+            provider.setPassword(passwordEncoder.encode(UUID.randomUUID().toString()));
+            provider.setRole(Role.PROVIDER);
+            provider.setParentCategoryId(1L); // Default Health
+            provider.setAcceptTerms(true);
+            provider.setPlanStatus(PlanStatus.TRIAL);
+            provider.setTrialExpiresAt(LocalDateTime.now().plusDays(14));
+            provider.setOnboardingComplete(false); // 👈 Importante: Forzará el paso 2
+            provider.setEmailVerified(true); // Facebook verificado
+            
+            provider = providerRepository.save(provider);
+
+            // Crear satélites (Plan, Tienda) - Copia exacta de la lógica de Google
+            Plan freePlan = planRepository.findById(5L).orElseThrow();
+            ProviderPlan plan = new ProviderPlan();
+            plan.setProvider(provider);
+            plan.setPlan(freePlan);
+            plan.setStatus(PlanStatus.TRIAL);
+            plan.setStartDate(LocalDateTime.now());
+            plan.setEndDate(provider.getTrialExpiresAt());
+            providerPlanRepository.save(plan);
+            
+            ProviderMarketplace shop = new ProviderMarketplace();
+            shop.setProvider(provider);
+            shop.setStoreName("Tienda de " + name);
+            shop.setStoreSlug("tienda-" + provider.getId() + "-" + System.currentTimeMillis());
+            marketplaceRepository.save(shop);
+            
+            String jwtToken = jwtService.generateToken(provider.getId(), provider.getEmail(), provider.getRole().name());
+
+            return AuthResponse.builder()
+                    .token(jwtToken)
+                    .message("Registro con Facebook exitoso.")
+                    .status(AuthResponse.AuthStatus.builder()
+                            .onboardingComplete(false)
+                            .isEmailVerified(true)
+                            .build())
+                    .build();
+        }
+    }
 
     /**
      * Helper para formatear límites del plan de forma segura.

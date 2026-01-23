@@ -279,4 +279,14 @@ public class AuthController {
         AuthResponse response = authService.authenticateWithGoogle(request);
         return ResponseEntity.ok(response);
     }
+
+    /**
+     * Endpoint para Login/Registro con Facebook.
+     * POST /api/auth/social/facebook
+     */
+    @PostMapping("/social/facebook")
+    public ResponseEntity<AuthResponse> facebookLogin(@Valid @RequestBody SocialLoginRequest request) {
+        AuthResponse response = authenticationService.authenticateWithFacebook(request);
+        return ResponseEntity.ok(response);
+    }
 }

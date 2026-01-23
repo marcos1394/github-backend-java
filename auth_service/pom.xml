@@ -159,6 +159,11 @@
             <version>10.1.0</version>
         </dependency>
 
+<dependency>
+    <groupId>com.restfb</groupId>
+    <artifactId>restfb</artifactId>
+    <version>2025.15.0</version>
+</dependency>
         <dependency>
             <groupId>com.resend</groupId>
             <artifactId>resend-java</artifactId>
