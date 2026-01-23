@@ -15,6 +15,8 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.AuthenticationException;
 import com.quhealthy.auth_service.model.enums.*;
+import com.quhealthy.auth_service.service.security.AppleAuthService; // 👈 Importar
+import com.nimbusds.jwt.JWTClaimsSet; // 👈 Importar
 // Inyectar esto
 import com.quhealthy.auth_service.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -57,6 +59,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder; // BCrypt
     private final NotificationService notificationService; // Tu servicio de notificaciones
     private final GoogleAuthService googleAuthService; // 💉 Inyectado para Google Login
+    private final AppleAuthService appleAuthService; // 💉 Inyectar
     // Variable de entorno para construir links (http://localhost:3000 o https://quhealthy.com)
     @Value("${app.frontend.url:http://localhost:3000}")
     private String frontendUrl;
@@ -1082,6 +1085,133 @@ public class AuthService {
                     .build();
         }
     }
+
+    // =================================================================
+    // 6. LOGIN CON APPLE (PRODUCCIÓN)
+    // =================================================================
+    @Transactional
+    public AuthResponse authenticateWithApple(SocialLoginRequest request) {
+        log.info("🍎 [Apple] Procesando autenticación.");
+
+        // 1. Validar el Identity Token con las llaves públicas de Apple
+        // Esto lanza RuntimeException si el token es falso o expiró.
+        JWTClaimsSet claims = appleAuthService.validateToken(request.getToken());
+        
+        // 2. Extraer datos críticos
+        String email = (String) claims.getClaim("email");
+        String appleUserId = claims.getSubject(); // Identificador único de Apple (sub)
+
+        // 3. Validación de Integridad (Gatekeeper)
+        // En producción, no podemos permitir usuarios sin email ya que es nuestra Primary Key lógica.
+        if (email == null || email.isBlank()) {
+            log.error("❌ [Apple] El token es válido pero no contiene email. Sub: {}", appleUserId);
+            throw new IllegalArgumentException("No se pudo obtener el email desde Apple. Por favor, verifica los permisos o intenta con otro método.");
+        }
+
+        log.info("✅ [Apple] Token verificado. Usuario: {}", email);
+
+        // 4. Lógica de Autenticación Polimórfica (Provider vs Consumer)
+        var existingProvider = providerRepository.findByEmail(email);
+        var existingConsumer = consumerRepository.findByEmail(email);
+
+        if (existingProvider.isPresent()) {
+            // --- CASO 1: LOGIN PROVIDER EXISTENTE ---
+            Provider provider = existingProvider.get();
+            String jwtToken = jwtService.generateToken(provider.getId(), provider.getEmail(), provider.getRole().name());
+            
+            return AuthResponse.builder()
+                    .token(jwtToken)
+                    .message("Inicio de sesión exitoso con Apple.")
+                    .status(AuthResponse.AuthStatus.builder()
+                            .onboardingComplete(provider.isOnboardingComplete())
+                            .isEmailVerified(true) 
+                            .hasActivePlan(provider.getPlanStatus() == PlanStatus.ACTIVE || provider.getPlanStatus() == PlanStatus.TRIAL)
+                            .build())
+                    .build();
+
+        } else if (existingConsumer.isPresent()) {
+             // --- CASO 2: LOGIN CONSUMER EXISTENTE ---
+             Consumer consumer = existingConsumer.get();
+             String jwtToken = jwtService.generateToken(consumer.getId(), consumer.getEmail(), consumer.getRole().name());
+             
+             return AuthResponse.builder()
+                    .token(jwtToken)
+                    .message("Inicio de sesión exitoso con Apple.")
+                    .status(AuthResponse.AuthStatus.builder()
+                            .onboardingComplete(true) // Consumidores asumen onboarding listo
+                            .isEmailVerified(true)
+                            .hasActivePlan(false)
+                            .build())
+                    .build();
+        } else {
+            // --- CASO 3: REGISTRO NUEVO (PROVIDER POR DEFECTO) ---
+            log.info("🆕 [Apple] Creando nuevo Provider: {}", email);
+
+            // A. Crear Entidad Provider
+            Provider provider = new Provider();
+            
+            // Estrategia de Nombre: Usamos el prefijo del email como nombre temporal.
+            // Ejemplo: marcodr@privaterelay... -> "marcodr"
+            // Esto se corregirá cuando el usuario complete el Onboarding de Negocio.
+            String tempName = email.contains("@") ? email.split("@")[0] : "Usuario Apple";
+            provider.setName(tempName); 
+            
+            provider.setEmail(email);
+            // Generamos password aleatorio seguro (nunca se usará, el login es social)
+            provider.setPassword(passwordEncoder.encode(UUID.randomUUID().toString()));
+            
+            provider.setRole(Role.PROVIDER);
+            provider.setParentCategoryId(1L); // Default: Salud (se ajusta en onboarding)
+            provider.setAcceptTerms(true);
+            
+            // B. Configurar Estado Inicial
+            provider.setPlanStatus(PlanStatus.TRIAL);
+            provider.setTrialExpiresAt(LocalDateTime.now().plusDays(14));
+            provider.setOnboardingComplete(false); // CRÍTICO: Esto forzará el paso 2 del registro
+            provider.setEmailVerified(true); // Apple ya verificó el email
+            
+            // Guardamos para obtener el ID
+            provider = providerRepository.save(provider);
+
+            // C. Crear Satélites (Infraestructura de Negocio)
+            
+            // 1. Asignar Plan Gratuito
+            Plan freePlan = planRepository.findById(5L)
+                    .orElseThrow(() -> new RuntimeException("Error Crítico: Plan Base (ID 5) no encontrado."));
+            
+            ProviderPlan plan = new ProviderPlan();
+            plan.setProvider(provider);
+            plan.setPlan(freePlan);
+            plan.setStatus(PlanStatus.TRIAL);
+            plan.setStartDate(LocalDateTime.now());
+            plan.setEndDate(provider.getTrialExpiresAt());
+            providerPlanRepository.save(plan);
+            
+            // 2. Crear Marketplace (Tienda vacía)
+            ProviderMarketplace shop = new ProviderMarketplace();
+            shop.setProvider(provider);
+            shop.setStoreName("Tienda de " + tempName);
+            // Slug único temporal para evitar colisiones
+            shop.setStoreSlug("tienda-" + provider.getId() + "-" + System.currentTimeMillis());
+            marketplaceRepository.save(shop);
+            
+            // D. Generar Token de Sesión
+            String jwtToken = jwtService.generateToken(provider.getId(), provider.getEmail(), provider.getRole().name());
+
+            log.info("🚀 [Apple] Registro completado exitosamente para ID: {}", provider.getId());
+
+            return AuthResponse.builder()
+                    .token(jwtToken)
+                    .message("Registro con Apple exitoso.")
+                    .status(AuthResponse.AuthStatus.builder()
+                            .onboardingComplete(false) // El front detectará esto y redirigirá a completar perfil
+                            .isEmailVerified(true)
+                            .hasActivePlan(true)
+                            .build())
+                    .build();
+        }
+    }
+
 
     /**
      * Helper para formatear límites del plan de forma segura.

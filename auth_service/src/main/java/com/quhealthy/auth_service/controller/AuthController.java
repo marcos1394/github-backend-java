@@ -289,4 +289,14 @@ public class AuthController {
         AuthResponse response = authService.authenticateWithFacebook(request);
         return ResponseEntity.ok(response);
     }
+
+    /**
+     * Endpoint para Login/Registro con Apple.
+     * POST /api/auth/social/apple
+     */
+    @PostMapping("/social/apple")
+    public ResponseEntity<AuthResponse> appleLogin(@Valid @RequestBody SocialLoginRequest request) {
+        AuthResponse response = authService.authenticateWithApple(request);
+        return ResponseEntity.ok(response);
+    }
 }
