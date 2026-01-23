@@ -20,7 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [auth_service, onboarding_service]
+        # 👇 AQUI AGREGAMOS EL NUEVO SERVICIO (Nombre de la carpeta)
+        service: [auth_service, onboarding_service, social_service]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,11 +41,12 @@ jobs:
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
 
-      # Analizamos cada servicio por separado
+      # Analizamos cada servicio por separado según la matriz
       - name: Build and Analyze ${{ matrix.service }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          # Sonar a veces requiere compilar, por lo que necesita un JWT dummy si los tests corren
           JWT_SECRET: ${{ secrets.JWT_SECRET }} 
         # Navegamos a la carpeta del servicio antes de ejecutar Maven
         run: |
@@ -68,7 +70,7 @@ jobs:
       id-token: 'write'
 
     strategy:
-      fail-fast: false # Si falla uno, que el otro siga intentando
+      fail-fast: false # Si falla uno, que los otros sigan intentando
       matrix:
         include:
           # --- CONFIGURACIÓN AUTH SERVICE ---
@@ -99,10 +101,24 @@ jobs:
               DB_PASSWORD=application_db_password:latest
               JWT_SECRET=application_jwt_secret:latest
 
+          # --- CONFIGURACIÓN SOCIAL SERVICE (NUEVO) ---
+          - service-name: social-service
+            directory: social_service
+            # Secretos: DB, JWT y las llaves de Facebook/Meta
+            # NOTA: Asegúrate de crear los secretos de Facebook en Google Secret Manager
+            secrets-list: |
+              DB_URL=application_db_url:latest
+              DB_USER=application_db_user:latest
+              DB_PASSWORD=application_db_password:latest
+              JWT_SECRET=application_jwt_secret:latest
+              FACEBOOK_APP_ID=application_facebook_app_id:latest
+              FACEBOOK_APP_SECRET=application_facebook_app_secret:latest
+              FACEBOOK_REDIRECT_URI=application_facebook_redirect_uri:latest
+
     steps:
       - uses: actions/checkout@v4
 
-      # 1. Autenticación Google Cloud
+      # 1. Autenticación Google Cloud (Workload Identity Federation)
       - id: 'auth'
         name: 'Authenticate to Google Cloud'
         uses: 'google-github-actions/auth@v2'
@@ -123,7 +139,7 @@ jobs:
         run: |
           IMAGE_URI=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ matrix.service-name }}:${{ github.sha }}
           
-          # Entramos al directorio específico (auth_service u onboarding_service)
+          # Entramos al directorio específico
           cd ${{ matrix.directory }}
           
           # Construimos usando el Dockerfile de esa carpeta
@@ -138,10 +154,10 @@ jobs:
           region: ${{ env.REGION }}
           image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ matrix.service-name }}:${{ github.sha }}
           
-          # Variables públicas (Puertos distintos si fuera local, pero en Cloud Run el container escucha en 8080 internamente por defecto, aunque Spring corra en 8081, Cloud Run mapea el puerto automáticamente si se configura o Spring se adapta)
-          # NOTA: Cloud Run inyecta la variable PORT=8080. Spring Boot usará ese puerto.
+          # Variables de entorno públicas
+          # Cloud Run inyecta PORT=8080 automáticamente.
           env_vars: |
             SPRING_PROFILES_ACTIVE=prod
           
-          # Secretos específicos definidos en la matriz
+          # Inyección de Secretos desde Google Secret Manager
           secrets: ${{ matrix.secrets-list }}
