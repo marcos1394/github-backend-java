@@ -286,7 +286,7 @@ public class AuthController {
      */
     @PostMapping("/social/facebook")
     public ResponseEntity<AuthResponse> facebookLogin(@Valid @RequestBody SocialLoginRequest request) {
-        AuthResponse response = authenticationService.authenticateWithFacebook(request);
+        AuthResponse response = authService.authenticateWithFacebook(request);
         return ResponseEntity.ok(response);
     }
 }
