@@ -1,5 +1,5 @@
 package com.quhealthy.onboarding_service.service;
-
+import com.quhealthy.onboarding_service.dto.UpdateProfileRequest; // Asegúrate de importar el DTO
 import com.quhealthy.onboarding_service.dto.TagDto;
 import com.quhealthy.onboarding_service.model.Provider;
 import com.quhealthy.onboarding_service.model.Tag;
@@ -77,6 +77,34 @@ public class OnboardingService {
         provider.getTags().clear();
         providerRepository.save(provider);
         log.info("🗑️ Todos los tags eliminados para Provider ID: {}", providerId);
+    }
+
+    /**
+     * PASO 1 (Nivelación): Completa los datos básicos de negocio.
+     * Esencial para usuarios de Google Login que no tienen teléfono ni nombre comercial.
+     */
+    @Transactional
+    public Provider updateBusinessProfile(Long providerId, UpdateProfileRequest request) {
+        log.info("📝 [Onboarding] Actualizando datos base para Provider ID: {}", providerId);
+
+        Provider provider = providerRepository.findById(providerId)
+                .orElseThrow(() -> new RuntimeException("Proveedor no encontrado con ID: " + providerId));
+
+        // 1. Actualizar Datos Críticos
+        provider.setBusinessName(request.getBusinessName());
+        provider.setPhone(request.getPhone());
+        provider.setArchetype(request.getArchetype());
+        provider.setParentCategoryId(request.getParentCategoryId());
+
+        // 2. Subcategoría (si aplica)
+        if (request.getSubCategoryId() != null) {
+            provider.setSubCategoryId(request.getSubCategoryId());
+        }
+
+        // NOTA: No marcamos onboardingComplete=true ni pedimos dirección aquí.
+        // Solo aseguramos que el usuario tenga identidad de negocio.
+
+        return providerRepository.save(provider);
     }
 
     // Helper privado para convertir a DTO
