@@ -24,55 +24,48 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ContentGeneratorService {
 
-    // Inyectamos el modelo "Flash" que configuramos en AiConfig
     @Qualifier("textModel")
     private final GenerativeModel textModel;
 
-    // Redis para guardar el historial (Contexto + Firmas de Pensamiento)
     private final RedisTemplate<String, Object> redisTemplate;
 
     private static final String REDIS_PREFIX = "chat:history:";
-    private static final Duration SESSION_TTL = Duration.ofMinutes(30); // El contexto vive 30 mins
+    private static final Duration SESSION_TTL = Duration.ofMinutes(30);
 
-    /**
-     * Genera texto manteniendo el contexto de la conversación.
-     */
     public AiTextResponse generatePostText(AiTextRequest request) throws IOException {
         String sessionId = request.getSessionId();
         List<Content> history = new ArrayList<>();
 
-        // 1. Si hay sesión, intentamos recuperar el historial de Redis
         if (sessionId != null && !sessionId.isEmpty()) {
             Object cachedHistory = redisTemplate.opsForValue().get(REDIS_PREFIX + sessionId);
             if (cachedHistory != null) {
-                // Warning: Unchecked cast, pero seguro si Redis serializer es JSON
                 history = (List<Content>) cachedHistory;
                 log.info("🧠 Contexto recuperado para sesión: {}", sessionId);
             }
         } else {
-            // Si no hay sesión, creamos una nueva
             sessionId = UUID.randomUUID().toString();
             log.info("✨ Nueva sesión de IA iniciada: {}", sessionId);
         }
 
-        // 2. Iniciar Chat con Gemini (Rehidratando historial si existe)
-        ChatSession chatSession = new ChatSession(textModel, history);
+        // --- CORRECCIÓN AQUÍ ---
+        // El constructor ChatSession(model, history) ya no existe.
+        // Creamos la sesión con el modelo y setteamos el historial manualmente.
+        ChatSession chatSession = new ChatSession(textModel);
+        if (!history.isEmpty()) {
+            chatSession.setHistory(history);
+        }
+        // -----------------------
 
-        // 3. Preparar el Prompt (Incluyendo el tono si se pide)
         String finalPrompt = request.getPrompt();
         if (request.getTone() != null && !request.getTone().isEmpty()) {
             finalPrompt += " (Tono: " + request.getTone() + ")";
         }
 
-        // 4. Enviar mensaje a Vertex AI
-        // Gemini 3 Flash procesará esto rápido
         GenerateContentResponse response = chatSession.sendMessage(finalPrompt);
         String responseText = ResponseHandler.getText(response);
 
-        // 5. Guardar el nuevo historial en Redis
-        // .getHistory() devuelve la lista completa acumulada (User + AI + Thoughts)
-        List<Content> updatedHistory = chatSession.getHistory();
-        redisTemplate.opsForValue().set(REDIS_PREFIX + sessionId, updatedHistory, SESSION_TTL);
+        // Guardamos el historial actualizado
+        redisTemplate.opsForValue().set(REDIS_PREFIX + sessionId, chatSession.getHistory(), SESSION_TTL);
 
         return AiTextResponse.builder()
                 .sessionId(sessionId)
