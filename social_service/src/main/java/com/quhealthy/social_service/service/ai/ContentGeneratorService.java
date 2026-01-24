@@ -10,6 +10,7 @@ import com.quhealthy.social_service.dto.ai.AiTextRequest;
 import com.quhealthy.social_service.dto.ai.AiTextResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value; // 👈 Importante
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -20,7 +21,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays; // 👈 IMPORTANTE: Agregado
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -32,6 +33,10 @@ public class ContentGeneratorService {
     private final ObjectMapper objectMapper;
     private final RedisTemplate<String, Object> redisTemplate;
     
+    // Inyectamos el ID del proyecto correctamente desde application.properties
+    @Value("${spring.cloud.gcp.project-id}")
+    private String projectId; // 👈 ESTA ES LA CORRECCIÓN
+
     private final HttpClient httpClient = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_2)
             .connectTimeout(Duration.ofSeconds(15))
@@ -49,20 +54,19 @@ public class ContentGeneratorService {
                 ? request.getSessionId() 
                 : UUID.randomUUID().toString();
 
-        log.info("✨ Iniciando generación OAUTH2 con {} | Sesión: {}", MODEL_NAME, sessionId);
+        log.info("✨ Iniciando generación Enterprise (OAuth2) | Modelo: {} | Proyecto: {}", MODEL_NAME, projectId);
 
-        // ✅ CORRECCIÓN DE SCOPES
-        // Agregamos explícitamente el permiso para 'generative-language'
+        // 1. Obtener Token con Scopes Correctos
         GoogleCredentials credentials = GoogleCredentials.getApplicationDefault()
                 .createScoped(Arrays.asList(
                     "https://www.googleapis.com/auth/cloud-platform",
-                    "https://www.googleapis.com/auth/generative-language" // 👈 EL SÉSAMO ÁBRETE
+                    "https://www.googleapis.com/auth/generative-language"
                 ));
         
         credentials.refreshIfExpired();
         String accessToken = credentials.getAccessToken().getTokenValue();
 
-        // --- Resto del código idéntico ---
+        // 2. Construir Historial (Redis)
         ArrayNode contentsArray = objectMapper.createArrayNode();
         List<ObjectNode> historyList = loadHistoryFromRedis(sessionId);
 
@@ -70,6 +74,7 @@ public class ContentGeneratorService {
             contentsArray.add(msg);
         }
 
+        // 3. Prompt
         String engineeredPrompt = buildPrompt(request);
         ObjectNode currentUserMessage = objectMapper.createObjectNode();
         currentUserMessage.put("role", "user");
@@ -84,23 +89,26 @@ public class ContentGeneratorService {
 
         String endpoint = String.format(API_URL_TEMPLATE, MODEL_NAME);
         
+        // 4. Request HTTP
         HttpRequest httpRequest = HttpRequest.newBuilder()
                 .uri(URI.create(endpoint))
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + accessToken)
-                .header("x-goog-user-project", getProjectId(credentials))
+                // 🛑 CORRECCIÓN: Usamos el ID del proyecto inyectado, no el email de la cuenta
+                .header("x-goog-user-project", projectId) 
                 .POST(HttpRequest.BodyPublishers.ofString(rootPayload.toString(), StandardCharsets.UTF_8))
                 .timeout(Duration.ofSeconds(30))
                 .build();
 
         HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
 
-        // Error handling crudo (Enterprise Debugging)
+        // Manejo de Errores Crudo
         if (response.statusCode() != 200) {
-            log.error("❌ Error CRUDO de Google AI (Status: {}): {}", response.statusCode(), response.body());
+            log.error("❌ Error Google AI ({}): {}", response.statusCode(), response.body());
             throw new RuntimeException(response.body());
         }
 
+        // 5. Procesar Respuesta
         String generatedText = extractTextFromResponse(response.body());
 
         historyList.add(currentUserMessage);
@@ -118,13 +126,6 @@ public class ContentGeneratorService {
     }
 
     // --- Métodos Auxiliares ---
-
-    private String getProjectId(GoogleCredentials credentials) {
-        if (credentials instanceof com.google.auth.ServiceAccountSigner) {
-            return ((com.google.auth.ServiceAccountSigner) credentials).getAccount();
-        }
-        return System.getenv("GOOGLE_CLOUD_PROJECT");
-    }
 
     private String buildPrompt(AiTextRequest request) {
         String basePrompt = request.getPrompt();
