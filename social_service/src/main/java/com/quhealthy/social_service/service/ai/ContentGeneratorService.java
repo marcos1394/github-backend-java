@@ -20,6 +20,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays; // 👈 IMPORTANTE: Agregado
 import java.util.List;
 import java.util.UUID;
 
@@ -31,19 +32,15 @@ public class ContentGeneratorService {
     private final ObjectMapper objectMapper;
     private final RedisTemplate<String, Object> redisTemplate;
     
-    // Cliente HTTP nativo Java 21
     private final HttpClient httpClient = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_2)
             .connectTimeout(Duration.ofSeconds(15))
             .build();
 
-    // 🚀 MODELO: Gemini 3 Flash Preview
-    // Nota: Si este modelo sigue restringido por lista blanca, cambiar a "gemini-2.0-flash-exp"
+    // Modelo objetivo
     private static final String MODEL_NAME = "gemini-3-flash-preview"; 
     
-    // URL Base (Sin ?key=...)
     private static final String API_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent";
-    
     private static final String REDIS_PREFIX = "chat:history:";
     private static final Duration SESSION_TTL = Duration.ofMinutes(30);
 
@@ -54,14 +51,18 @@ public class ContentGeneratorService {
 
         log.info("✨ Iniciando generación OAUTH2 con {} | Sesión: {}", MODEL_NAME, sessionId);
 
-        // 1. Obtener Token OAuth2 (Identidad de Cloud Run)
-        // Esto reemplaza a la API Key. Es "Enterprise Grade Security".
+        // ✅ CORRECCIÓN DE SCOPES
+        // Agregamos explícitamente el permiso para 'generative-language'
         GoogleCredentials credentials = GoogleCredentials.getApplicationDefault()
-                .createScoped("https://www.googleapis.com/auth/cloud-platform");
+                .createScoped(Arrays.asList(
+                    "https://www.googleapis.com/auth/cloud-platform",
+                    "https://www.googleapis.com/auth/generative-language" // 👈 EL SÉSAMO ÁBRETE
+                ));
+        
         credentials.refreshIfExpired();
         String accessToken = credentials.getAccessToken().getTokenValue();
 
-        // 2. Construir Historial y Prompt (Igual que antes)
+        // --- Resto del código idéntico ---
         ArrayNode contentsArray = objectMapper.createArrayNode();
         List<ObjectNode> historyList = loadHistoryFromRedis(sessionId);
 
@@ -81,35 +82,27 @@ public class ContentGeneratorService {
         generationConfig.put("temperature", 0.7);
         generationConfig.put("maxOutputTokens", 800);
 
-        // 3. Request HTTP con Header Authorization
         String endpoint = String.format(API_URL_TEMPLATE, MODEL_NAME);
         
         HttpRequest httpRequest = HttpRequest.newBuilder()
                 .uri(URI.create(endpoint))
                 .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + accessToken) // 👈 AQUÍ ESTÁ LA MAGIA
-                .header("x-goog-user-project", getProjectId(credentials)) // Ayuda con quotas
+                .header("Authorization", "Bearer " + accessToken)
+                .header("x-goog-user-project", getProjectId(credentials))
                 .POST(HttpRequest.BodyPublishers.ofString(rootPayload.toString(), StandardCharsets.UTF_8))
                 .timeout(Duration.ofSeconds(30))
                 .build();
 
         HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
 
-        
-        // 🛑 AQUÍ ESTÁ EL CAMBIO: MODO RAW ERROR
+        // Error handling crudo (Enterprise Debugging)
         if (response.statusCode() != 200) {
             log.error("❌ Error CRUDO de Google AI (Status: {}): {}", response.statusCode(), response.body());
-            
-            // Eliminamos mi mensaje personalizado.
-            // Ahora lanzamos el body exacto que mandó Google.
             throw new RuntimeException(response.body());
         }
 
-
-        // 5. Parsear Respuesta
         String generatedText = extractTextFromResponse(response.body());
 
-        // 6. Guardar en Redis
         historyList.add(currentUserMessage);
         ObjectNode modelResponseNode = objectMapper.createObjectNode();
         modelResponseNode.put("role", "model");
@@ -127,11 +120,10 @@ public class ContentGeneratorService {
     // --- Métodos Auxiliares ---
 
     private String getProjectId(GoogleCredentials credentials) {
-        // Intenta obtener el Project ID para el header de quota
         if (credentials instanceof com.google.auth.ServiceAccountSigner) {
             return ((com.google.auth.ServiceAccountSigner) credentials).getAccount();
         }
-        return System.getenv("GOOGLE_CLOUD_PROJECT"); // Fallback a variable de entorno
+        return System.getenv("GOOGLE_CLOUD_PROJECT");
     }
 
     private String buildPrompt(AiTextRequest request) {
