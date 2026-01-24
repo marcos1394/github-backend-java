@@ -8,4 +8,5 @@ import lombok.Data;
 public class AiTextResponse {
     private String sessionId; // Devolvemos el ID para que el front lo use en la siguiente réplica
     private String generatedText;
+    private String usedModel;     // 👈 ESTE ES EL CAMPO QUE FALTABA
 }

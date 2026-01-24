@@ -1,11 +1,10 @@
 package com.quhealthy.social_service.service.ai;
 
-import com.google.cloud.vertexai.VertexAI;
-import com.google.cloud.vertexai.api.Content;
-import com.google.cloud.vertexai.api.GenerateContentResponse;
-import com.google.cloud.vertexai.generativeai.ChatSession;
-import com.google.cloud.vertexai.generativeai.GenerativeModel;
-import com.google.cloud.vertexai.generativeai.ResponseHandler;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.quhealthy.social_service.dto.ai.AiTextRequest;
 import com.quhealthy.social_service.dto.ai.AiTextResponse;
 import lombok.RequiredArgsConstructor;
@@ -14,7 +13,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,83 +28,156 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ContentGeneratorService {
 
-    // Inyectamos Redis
+    private final ObjectMapper objectMapper;
     private final RedisTemplate<String, Object> redisTemplate;
+    
+    // Cliente HTTP optimizado para Java 21 (Reutilizable)
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_2)
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
 
-    // Inyectamos variables de proyecto (necesarias para instanciar el modelo aquí mismo)
-    @Value("${spring.cloud.gcp.project-id}")
-    private String projectId;
+    @Value("${google.ai.api-key}")
+    private String apiKey;
 
-    @Value("${spring.cloud.gcp.location:us-central1}")
-    private String location;
-
+    // 🚀 CONFIGURACIÓN DEL MODELO "FRONTIER"
+    // Usamos 'gemini-2.0-flash-exp' que es la versión pública actual de la nueva generación.
+    // Si tu organización tiene acceso whitelist a 'gemini-3-flash-preview', cámbialo aquí.
+    private static final String MODEL_NAME = "gemini-3-flash-preview"; 
+    
+    private static final String API_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s";
     private static final String REDIS_PREFIX = "chat:history:";
     private static final Duration SESSION_TTL = Duration.ofMinutes(30);
 
     public AiTextResponse generatePostText(AiTextRequest request) throws Exception {
-        String sessionId = request.getSessionId();
-        
-        // 1. Gestión de Sesión (Crear o Recuperar)
-        if (sessionId == null || sessionId.isEmpty()) {
-            sessionId = UUID.randomUUID().toString();
-            log.info("✨ Nueva sesión de IA iniciada: {}", sessionId);
-        } else {
-            log.info("🔄 Continuando sesión: {}", sessionId);
+        // 1. Gestión de Sesión
+        String sessionId = (request.getSessionId() != null && !request.getSessionId().isEmpty()) 
+                ? request.getSessionId() 
+                : UUID.randomUUID().toString();
+
+        log.info("✨ Iniciando generación Enterprise con {} | Sesión: {}", MODEL_NAME, sessionId);
+
+        // 2. Construir Historial (Contexto)
+        ArrayNode contentsArray = objectMapper.createArrayNode();
+        List<ObjectNode> historyList = loadHistoryFromRedis(sessionId);
+
+        // Agregamos el historial previo al payload
+        for (ObjectNode msg : historyList) {
+            contentsArray.add(msg);
         }
 
-        // 2. Recuperar Historial de Redis
-        List<Content> history = new ArrayList<>();
+        // 3. Ingeniería de Prompt (Nuevo Mensaje)
+        String engineeredPrompt = buildPrompt(request);
+        
+        // Crear nodo del mensaje actual (User)
+        ObjectNode currentUserMessage = objectMapper.createObjectNode();
+        currentUserMessage.put("role", "user");
+        currentUserMessage.putArray("parts").addObject().put("text", engineeredPrompt);
+        
+        // Agregarlo a la lista de envío
+        contentsArray.add(currentUserMessage);
+
+        // 4. Construir Payload JSON Completo
+        ObjectNode rootPayload = objectMapper.createObjectNode();
+        rootPayload.set("contents", contentsArray);
+
+        // Configuración de Generación (Temperatura, Tokens)
+        ObjectNode generationConfig = rootPayload.putObject("generationConfig");
+        generationConfig.put("temperature", 0.7);
+        generationConfig.put("maxOutputTokens", 800);
+
+        // 5. Ejecutar Petición HTTP (REST Nativo)
+        String endpoint = String.format(API_URL_TEMPLATE, MODEL_NAME, apiKey);
+        
+        HttpRequest httpRequest = HttpRequest.newBuilder()
+                .uri(URI.create(endpoint))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(rootPayload.toString(), StandardCharsets.UTF_8))
+                .timeout(Duration.ofSeconds(30))
+                .build();
+
+        HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+
+        // 6. Manejo de Errores y Respuesta
+        if (response.statusCode() != 200) {
+            log.error("❌ Error API Google AI ({}): {}", response.statusCode(), response.body());
+            throw new RuntimeException("Fallo en la generación de IA: " + response.body());
+        }
+
+        // 7. Parsear Respuesta Exitosa
+        String generatedText = extractTextFromResponse(response.body());
+
+        // 8. Actualizar Memoria (Redis)
+        // Agregamos lo que dijimos nosotros
+        historyList.add(currentUserMessage);
+        
+        // Agregamos lo que respondió la IA
+        ObjectNode modelResponseNode = objectMapper.createObjectNode();
+        modelResponseNode.put("role", "model");
+        modelResponseNode.putArray("parts").addObject().put("text", generatedText);
+        historyList.add(modelResponseNode);
+
+        saveHistoryToRedis(sessionId, historyList);
+
+        return AiTextResponse.builder()
+                .sessionId(sessionId)
+                .generatedText(generatedText)
+                .usedModel(MODEL_NAME)
+                .build();
+    }
+
+    // --- Métodos Auxiliares ---
+
+    private String buildPrompt(AiTextRequest request) {
+        String basePrompt = request.getPrompt();
+        String toneInstruction = (request.getTone() != null) 
+                ? " Tono deseado: " + request.getTone() + "." 
+                : "";
+        
+        return String.format("""
+            Actúa como experto en Social Media para 'QuHealthy'.
+            Tarea: %s
+            %s
+            Requisitos: Usa emojis, sé breve y usa 3 hashtags al final.
+            """, basePrompt, toneInstruction);
+    }
+
+    private String extractTextFromResponse(String jsonBody) {
         try {
-            Object cachedHistory = redisTemplate.opsForValue().get(REDIS_PREFIX + sessionId);
-            if (cachedHistory != null) {
-                // Nota: Asegúrate de que tu configuración de Redis serialice bien los objetos de Google
-                history = (List<Content>) cachedHistory; 
-                log.info("🧠 Memoria recuperada: {} mensajes previos", history.size());
+            JsonNode root = objectMapper.readTree(jsonBody);
+            return root.path("candidates").get(0)
+                    .path("content").path("parts").get(0)
+                    .path("text").asText();
+        } catch (Exception e) {
+            log.error("⚠️ Error parseando JSON de Gemini: {}", jsonBody);
+            throw new RuntimeException("La IA respondió pero no pude leer el texto.");
+        }
+    }
+
+    // --- Persistencia en Redis (Manejo Manual de JSON) ---
+
+    private List<ObjectNode> loadHistoryFromRedis(String sessionId) {
+        try {
+            Object cached = redisTemplate.opsForValue().get(REDIS_PREFIX + sessionId);
+            if (cached != null) {
+                // Deserializamos la lista de objetos JSON
+                return objectMapper.convertValue(cached, new TypeReference<List<ObjectNode>>() {});
             }
         } catch (Exception e) {
-            log.error("⚠️ Error leyendo Redis (iniciando chat limpio): {}", e.getMessage());
-            // Si falla Redis, no rompemos el flujo, solo empezamos sin memoria
+            log.warn("⚠️ No se pudo leer el historial de Redis para {}: {}", sessionId, e.getMessage());
         }
+        return new ArrayList<>();
+    }
 
-        // 3. Instanciar Vertex AI y el Modelo (Gemini 2.5 Flash)
-        // Usamos try-with-resources para asegurar que VertexAI se cierre correctamente
-        try (VertexAI vertexAI = new VertexAI(projectId, location)) {
-            
-            // 🚀 AQUÍ DEFINIMOS EL MODELO 2.5 FLASH
-            GenerativeModel model = new GenerativeModel("gemini-2.5-flash", vertexAI);
-
-            // 4. Iniciar Sesión de Chat
-            ChatSession chatSession = new ChatSession(model);
-            
-            // Si hay historial previo, lo inyectamos
-            if (!history.isEmpty()) {
-                chatSession.setHistory(history);
+    private void saveHistoryToRedis(String sessionId, List<ObjectNode> history) {
+        try {
+            // Guardamos solo los últimos 10 mensajes para no saturar tokens
+            if (history.size() > 10) {
+                history = history.subList(history.size() - 10, history.size());
             }
-
-            // 5. Preparar el Prompt con Tono
-            String finalPrompt = request.getPrompt();
-            if (request.getTone() != null && !request.getTone().isEmpty()) {
-                finalPrompt += "\n\n(Instrucción de Tono: Responde con un estilo " + request.getTone() + ")";
-            }
-
-            // 6. Enviar mensaje a Google
-            GenerateContentResponse response = chatSession.sendMessage(finalPrompt);
-            String responseText = ResponseHandler.getText(response);
-
-            // 7. Guardar el nuevo historial en Redis (Async o Sync)
-            try {
-                // Obtenemos el historial actualizado (incluye la nueva respuesta)
-                List<Content> updatedHistory = chatSession.getHistory();
-                redisTemplate.opsForValue().set(REDIS_PREFIX + sessionId, updatedHistory, SESSION_TTL);
-            } catch (Exception e) {
-                log.error("⚠️ No se pudo guardar el historial en Redis: {}", e.getMessage());
-            }
-
-            return AiTextResponse.builder()
-                    .sessionId(sessionId)
-                    .generatedContent(responseText) // Ajustado al nombre de campo de tu DTO
-                    .usedModel("gemini-2.5-flash")
-                    .build();
+            redisTemplate.opsForValue().set(REDIS_PREFIX + sessionId, history, SESSION_TTL);
+        } catch (Exception e) {
+            log.error("⚠️ Error guardando en Redis: {}", e.getMessage());
         }
     }
 }

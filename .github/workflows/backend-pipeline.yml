@@ -114,7 +114,7 @@ jobs:
               FACEBOOK_APP_ID=application_facebook_app_id:latest
               FACEBOOK_APP_SECRET=application_facebook_app_secret:latest
               FACEBOOK_REDIRECT_URI=application_facebook_redirect_uri:latest
-
+              GOOGLE_AI_API_KEY=google-ai-api-key:latest
     steps:
       - uses: actions/checkout@v4
 

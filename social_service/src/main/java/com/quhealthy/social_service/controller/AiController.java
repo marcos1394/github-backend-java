@@ -10,6 +10,7 @@ import com.quhealthy.social_service.dto.ai.AiVideoRequest;
 import com.quhealthy.social_service.dto.ai.AiVideoResponse;
 import com.quhealthy.social_service.service.ai.VideoGeneratorService;
 import jakarta.validation.Valid;
+import java.util.Map; // 👈 ESTO FALTABA (Error 'cannot find symbol variable Map')
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -31,13 +32,16 @@ public class AiController {
     private final VideoGeneratorService videoGeneratorService;
 
     @PostMapping("/generate-text")
-    public ResponseEntity<AiTextResponse> generateText(@Valid @RequestBody AiTextRequest request) {
+    public ResponseEntity<?> generateText(@RequestBody AiTextRequest request) {
+        log.info("📝 Solicitud de generación de texto recibida.");
         try {
-            AiTextResponse response = contentGeneratorService.generatePostText(request);
+            // ✅ Ahora capturamos cualquier error que venga de la IA
+            var response = contentGeneratorService.generatePostText(request);
             return ResponseEntity.ok(response);
-        } catch (IOException e) {
-            log.error("Error generando contenido con IA: ", e);
-            return ResponseEntity.internalServerError().build();
+        } catch (Exception e) {
+            log.error("❌ Error generando texto: ", e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Error generando texto con IA: " + e.getMessage()));
         }
     }
 
