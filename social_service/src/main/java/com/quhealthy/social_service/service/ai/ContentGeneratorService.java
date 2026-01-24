@@ -95,16 +95,16 @@ public class ContentGeneratorService {
 
         HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
 
-        // 4. Manejo de Errores
+        
+        // 🛑 AQUÍ ESTÁ EL CAMBIO: MODO RAW ERROR
         if (response.statusCode() != 200) {
-            log.error("❌ Error API Google AI ({}): {}", response.statusCode(), response.body());
+            log.error("❌ Error CRUDO de Google AI (Status: {}): {}", response.statusCode(), response.body());
             
-            // Fallback Inteligente: Si Gemini 3 falla (404/403), sugerir Gemini 2.0
-            if (response.statusCode() == 404 || response.statusCode() == 403) {
-                 throw new RuntimeException("El modelo '" + MODEL_NAME + "' no está accesible para tu cuenta aún. Intenta cambiar a 'gemini-2.0-flash-exp' en el código.");
-            }
-            throw new RuntimeException("Fallo en la generación de IA: " + response.body());
+            // Eliminamos mi mensaje personalizado.
+            // Ahora lanzamos el body exacto que mandó Google.
+            throw new RuntimeException(response.body());
         }
+
 
         // 5. Parsear Respuesta
         String generatedText = extractTextFromResponse(response.body());
