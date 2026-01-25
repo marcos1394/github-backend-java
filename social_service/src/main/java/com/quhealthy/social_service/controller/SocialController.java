@@ -15,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.transaction.annotation.Transactional; // ✅ IMPORTANTE PARA LA ATOMICIDAD
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -51,6 +52,7 @@ public class SocialController {
         Long providerId = getAuthenticatedUserId();
         
         try {
+            // Nota: El servicio debe manejar la lógica de "Reactivar" si la cuenta ya existía pero estaba inactiva.
             socialAuthService.handleFacebookCallback(providerId, code);
             return ResponseEntity.ok(Map.of("message", "Facebook vinculado exitosamente"));
         } catch (Exception e) {
@@ -60,14 +62,16 @@ public class SocialController {
     }
 
     /**
-     * Lista todas las cuentas conectadas del usuario (sin mostrar tokens).
+     * Lista todas las cuentas conectadas y ACTIVAS del usuario.
      */
     @GetMapping("/connections")
     public ResponseEntity<List<SocialConnectionResponse>> getConnections() {
         Long providerId = getAuthenticatedUserId();
 
+        // Filtramos solo las que tienen isActive = true
         List<SocialConnectionResponse> connections = connectionRepository.findByProviderId(providerId)
                 .stream()
+                .filter(SocialConnection::isActive) // ✅ Solo mostramos las activas
                 .map(conn -> SocialConnectionResponse.builder()
                         .id(conn.getId())
                         .platform(conn.getPlatform())
@@ -82,22 +86,52 @@ public class SocialController {
     }
 
     /**
-     * Desvincular una cuenta (Borrar token).
+     * Desvincular una cuenta (ESTRATEGIA ENTERPRISE - SOFT DELETE).
+     * No borra el registro, solo lo desactiva y pausa los posts pendientes.
      */
     @DeleteMapping("/connections/{id}")
+    @Transactional // ✅ Garantiza que todo ocurra en una sola transacción
     public ResponseEntity<?> deleteConnection(@PathVariable UUID id) {
         Long providerId = getAuthenticatedUserId();
         
-        // Verificamos que la conexión pertenezca al usuario que la quiere borrar
+        // 1. Buscar la conexión
         SocialConnection conn = connectionRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Conexión no encontrada"));
 
+        // 2. Verificar propiedad
         if (!conn.getProviderId().equals(providerId)) {
             return ResponseEntity.status(403).body("No tienes permiso para eliminar esta conexión.");
         }
 
-        connectionRepository.delete(conn);
-        return ResponseEntity.ok(Map.of("message", "Cuenta desvinculada correctamente"));
+        // 3. SOFT DELETE (Desactivar)
+        log.info("🔌 Desvinculando cuenta: {} (Soft Delete)", conn.getPlatformUserName());
+        
+        conn.setAccessToken(null);  // Borramos credenciales por seguridad
+        conn.setRefreshToken(null);
+        conn.setActive(false);      // Marcamos como inactiva en BD
+        
+        connectionRepository.save(conn); // Guardamos el cambio de estado
+
+        // 4. GESTIONAR POSTS HUÉRFANOS (Pausar/Cancelar)
+        // Buscamos los posts de este usuario que estén agendados para ESTA conexión
+        List<ScheduledPost> pendingPosts = scheduledPostRepository.findByProviderIdOrderByScheduledAtDesc(providerId)
+                .stream()
+                .filter(p -> p.getSocialConnection().getId().equals(id)) // Pertenecen a esta cuenta
+                .filter(p -> p.getStatus() == PostStatus.SCHEDULED)      // Y todavía no se han publicado
+                .collect(Collectors.toList());
+
+        if (!pendingPosts.isEmpty()) {
+            log.info("⏸️ Cancelando {} posts pendientes debido a desvinculación.", pendingPosts.size());
+            
+            pendingPosts.forEach(post -> {
+                post.setStatus(PostStatus.FAILED); // O usa un estado PAUSED si lo creas en el Enum
+                post.setErrorMessage("Publicación cancelada: La cuenta social fue desvinculada.");
+            });
+            
+            scheduledPostRepository.saveAll(pendingPosts);
+        }
+
+        return ResponseEntity.ok(Map.of("message", "Cuenta desvinculada correctamente. Los posts pendientes han sido cancelados."));
     }
 
     // =================================================================
@@ -106,7 +140,6 @@ public class SocialController {
 
     /**
      * Agendar un nuevo post.
-     * Guarda en BD con estado 'SCHEDULED'. El Cron Job lo recogerá después.
      */
     @PostMapping("/posts/schedule")
     public ResponseEntity<?> schedulePost(@Valid @RequestBody SchedulePostRequest request) {
@@ -120,6 +153,11 @@ public class SocialController {
             return ResponseEntity.status(403).body("No te pertenece esa conexión social.");
         }
 
+        // ✅ Validación Extra: No permitir agendar en cuentas inactivas
+        if (!conn.isActive()) {
+            return ResponseEntity.badRequest().body("No puedes agendar posts en una cuenta desvinculada.");
+        }
+
         // Crear el Post
         ScheduledPost post = ScheduledPost.builder()
                 .providerId(providerId)
@@ -128,7 +166,7 @@ public class SocialController {
                 .mediaUrls(request.getMediaUrls()) // Lista de URLs de GCS
                 .scheduledAt(request.getScheduledAt())
                 .status(PostStatus.SCHEDULED)
-                .generatedByAi(false) // Por ahora manual, luego conectamos Gemini
+                .generatedByAi(false) // Por ahora manual
                 .build();
 
         scheduledPostRepository.save(post);
@@ -137,13 +175,12 @@ public class SocialController {
     }
 
     /**
-     * Obtener el calendario de posts (Historial y Futuros).
+     * Obtener el calendario de posts.
      */
     @GetMapping("/posts")
     public ResponseEntity<List<ScheduledPost>> getPosts() {
         Long providerId = getAuthenticatedUserId();
-        // Nota: En un sistema real, usaríamos Paginación (Pageable) aquí.
-        // Para el MVP devolvemos la lista completa ordenada.
+        // Devolvemos todos los posts (incluso los cancelados/fallidos para historial)
         return ResponseEntity.ok(scheduledPostRepository.findByProviderIdOrderByScheduledAtDesc(providerId));
     }
 
@@ -152,8 +189,7 @@ public class SocialController {
     // =================================================================
 
     /**
-     * Subir una imagen/video a Google Cloud Storage antes de postear.
-     * Devuelve la URL pública.
+     * Subir una imagen/video a Google Cloud Storage.
      */
     @PostMapping("/upload")
     public ResponseEntity<?> uploadMedia(@RequestParam("file") MultipartFile file) {

@@ -34,24 +34,33 @@ public class SocialConnection {
     private SocialPlatform platform;
 
     @Column(name = "platform_user_id", nullable = false)
-    private String platformUserId; // ID externo (ej: ID de la FanPage, ID de Instagram Business)
+    private String platformUserId; // ID externo (ej: ID de la FanPage)
 
     @Column(nullable = false)
     private String platformUserName; // Nombre legible (ej: "Clínica Dr. House")
 
+    // --- NUEVO: SOFT DELETE / ESTADO ---
+    // Indica si la conexión está vigente. 
+    // Si el usuario desvincula, esto pasa a FALSE, pero el registro se queda.
+    @Builder.Default
+    @Column(name = "is_active", nullable = false)
+    private boolean isActive = true;
+
     // --- SEGURIDAD (TOKENS) ---
-    // Usamos columnDefinition = "TEXT" porque los tokens JWT son enormes
-    @Column(columnDefinition = "TEXT", nullable = false)
+    // ⚠️ CAMBIO: Quitamos 'nullable = false'.
+    // Razón: Al hacer Soft Delete, borraremos el token por seguridad (conn.setAccessToken(null)),
+    // así que la base de datos debe permitir nulos aquí.
+    @Column(columnDefinition = "TEXT") 
     private String accessToken;
 
     @Column(columnDefinition = "TEXT")
-    private String refreshToken; // Para renovar acceso sin pedir login de nuevo
+    private String refreshToken;
 
     private LocalDateTime tokenExpiresAt;
 
     // --- METADATA ---
     @Column(columnDefinition = "TEXT")
-    private String profileImageUrl; // Foto de perfil de la página/red
+    private String profileImageUrl;
 
     @CreationTimestamp
     private LocalDateTime createdAt;
