@@ -20,8 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 👇 AQUI AGREGAMOS EL NUEVO SERVICIO (Nombre de la carpeta)
-        service: [auth_service, onboarding_service, social_service]
+        # 👇 AQUI AGREGAMOS EL NUEVO SERVICIO PAYMENT
+        service: [auth_service, onboarding_service, social_service, payment_service]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,11 +101,10 @@ jobs:
               DB_PASSWORD=application_db_password:latest
               JWT_SECRET=application_jwt_secret:latest
 
-          # --- CONFIGURACIÓN SOCIAL SERVICE (NUEVO) ---
+          # --- CONFIGURACIÓN SOCIAL SERVICE ---
           - service-name: social-service
             directory: social_service
-            # Secretos: DB, JWT y las llaves de Facebook/Meta
-            # NOTA: Asegúrate de crear los secretos de Facebook en Google Secret Manager
+            # Secretos: DB, JWT y las llaves de Facebook/Meta/GoogleAI
             secrets-list: |
               DB_URL=application_db_url:latest
               DB_USER=application_db_user:latest
@@ -115,6 +114,22 @@ jobs:
               FACEBOOK_APP_SECRET=application_facebook_app_secret:latest
               FACEBOOK_REDIRECT_URI=application_facebook_redirect_uri:latest
               GOOGLE_AI_API_KEY=google-ai-api-key:latest
+
+          # --- CONFIGURACIÓN PAYMENT SERVICE (NUEVO 🚀) ---
+          - service-name: payment-service
+            directory: payment_service
+            # Secretos: DB, JWT, Stripe y MercadoPago
+            # NOTA: Asegúrate de haber creado estos secretos en Google Secret Manager
+            secrets-list: |
+              DB_URL=application_db_url:latest
+              DB_USER=application_db_user:latest
+              DB_PASSWORD=application_db_password:latest
+              JWT_SECRET=application_jwt_secret:latest
+              STRIPE_API_KEY=application_stripe_key:latest
+              STRIPE_WEBHOOK_SECRET=application_stripe_webhook_secret:latest
+              MP_ACCESS_TOKEN=application_mp_access_token:latest
+              MP_WEBHOOK_SECRET=application_mp_webhook_secret:latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -155,7 +170,7 @@ jobs:
           image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ matrix.service-name }}:${{ github.sha }}
           
           # Variables de entorno públicas
-          # Cloud Run inyecta PORT=8080 automáticamente.
+          # Cloud Run inyecta PORT=8080 automáticamente (aunque internamente usemos otro en local).
           env_vars: |
             SPRING_PROFILES_ACTIVE=prod
           
