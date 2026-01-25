@@ -28,17 +28,25 @@ public class ImageGeneratorService {
     @Value("${spring.cloud.gcp.location:us-central1}")
     private String location;
 
-    // Modelo Gemini 3 Pro para imágenes
     private static final String MODEL_NAME = "gemini-3-pro-image-preview";
 
     public AiImageResponse generateImage(AiImageRequest request) throws Exception {
         String sessionId = (request.getSessionId() != null) ? request.getSessionId() : UUID.randomUUID().toString();
-        log.info("🎨 Iniciando generación de IMAGEN con {} | Sesión: {}", MODEL_NAME, sessionId);
+        
+        // Validación de seguridad (igual que antes)
+        String actualProjectId = (projectId != null && !projectId.isEmpty()) 
+                ? projectId 
+                : System.getenv("GOOGLE_CLOUD_PROJECT");
+        
+        if (actualProjectId == null || actualProjectId.isEmpty()) {
+            throw new RuntimeException("❌ ERROR FATAL: El Project ID es NULL.");
+        }
+
+        log.info("🎨 Iniciando generación con {} | Sesión: {}", MODEL_NAME, sessionId);
 
         String enhancedPrompt = enhancePrompt(request.getPrompt());
         String aspectRatioStr = mapAspectRatio(request.getAspectRatio());
 
-        // 1. Configuración de la petición
         GenerateContentConfig config = GenerateContentConfig.builder()
                 .responseModalities("IMAGE")
                 .imageConfig(ImageConfig.builder()
@@ -47,35 +55,30 @@ public class ImageGeneratorService {
                         .build())
                 .build();
 
-        // 2. Instanciación del Cliente (CORREGIDO: Usando Builder)
-        // Esto evita el error de "no suitable constructor"
+        // 👇 LA CORRECCIÓN MÁGICA ESTÁ AQUÍ
         try (Client client = Client.builder()
-                .project(projectId)
+                .project(actualProjectId)
                 .location(location)
+                .vertexAI(true) // 👈 ¡ESTO FALTABA! Forzamos el modo Vertex AI
                 .build()) {
 
-            // 3. Llamada al Modelo
             GenerateContentResponse response = client.models.generateContent(
                     MODEL_NAME,
                     enhancedPrompt,
                     config
             );
 
-            // 4. Procesamiento de la Respuesta (CORREGIDO: Manejo de Optionals)
             for (Part part : response.parts()) {
                 if (part.inlineData().isPresent()) {
                     var blob = part.inlineData().get();
                     if (blob.data().isPresent()) {
                         byte[] imageBytes = blob.data().get();
-                        
-                        // FIX: El SDK devuelve Optional<String>, usamos orElse para obtener el String
                         String mimeType = blob.mimeType().orElse("image/png");
 
-                        // Subir a Cloud Storage
                         String fileName = "ai-gen/" + sessionId + "/" + UUID.randomUUID() + "." + getExtension(mimeType);
                         String publicUrl = cloudStorageService.uploadFile(imageBytes, mimeType, fileName);
 
-                        log.info("✅ Imagen generada y subida: {}", publicUrl);
+                        log.info("✅ Imagen generada: {}", publicUrl);
 
                         return AiImageResponse.builder()
                                 .sessionId(sessionId)
@@ -85,11 +88,10 @@ public class ImageGeneratorService {
                 }
             }
             throw new RuntimeException("Gemini no devolvió datos de imagen válidos.");
-        } catch (Exception e) {
-            log.error("❌ Error generando imagen: {}", e.getMessage(), e);
-            throw e; // Re-lanzamos para que el Controller lo capture
         }
     }
+
+    // --- Métodos Auxiliares ---
 
     private String enhancePrompt(String originalPrompt) {
         return originalPrompt + ", professional photograph, highly detailed, cinematic lighting, 4k resolution";
