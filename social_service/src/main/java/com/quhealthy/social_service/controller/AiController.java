@@ -45,21 +45,22 @@ public class AiController {
         }
     }
 
-    // 👇 NUEVO ENDPOINT PARA IMÁGENES
     @PostMapping("/generate-image")
-    public ResponseEntity<AiImageResponse> generateImage(@Valid @RequestBody AiImageRequest request) {
+    public ResponseEntity<?> generateImage(@RequestBody AiImageRequest request) {
+        log.info("🎨 Solicitud de generación de imagen recibida.");
+        
+        // 🚨 AQUÍ ESTABA EL ERROR: Faltaba el try-catch
         try {
-            AiImageResponse response = imageGeneratorService.generateImage(request);
+            var response = imageGeneratorService.generateImage(request);
             return ResponseEntity.ok(response);
-        } catch (IOException e) {
-            log.error("Error generando imagen con IA: ", e);
-            return ResponseEntity.internalServerError().build();
-        } catch (RuntimeException e) {
-             log.error("Error procesando respuesta de imagen: ", e);
-             // Si Gemini no generó imagen (ej: filtro de seguridad), devolvemos bad request
-             return ResponseEntity.badRequest().body(AiImageResponse.builder().imageUrl("Error: " + e.getMessage()).build());
+        } catch (Exception e) {
+            log.error("❌ Error generando imagen: ", e);
+            // Devolvemos un 500 limpio al frontend
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Error generando imagen: " + e.getMessage()));
         }
     }
+    
 
     @PostMapping("/generate-video")
     public ResponseEntity<AiVideoResponse> generateVideo(@Valid @RequestBody AiVideoRequest request) {

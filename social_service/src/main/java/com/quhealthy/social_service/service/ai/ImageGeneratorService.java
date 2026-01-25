@@ -28,49 +28,54 @@ public class ImageGeneratorService {
     @Value("${spring.cloud.gcp.location:us-central1}")
     private String location;
 
-    // 🚀 MODELO: Gemini 3 Pro Image Preview (Calidad Profesional)
+    // Modelo Gemini 3 Pro para imágenes
     private static final String MODEL_NAME = "gemini-3-pro-image-preview";
 
     public AiImageResponse generateImage(AiImageRequest request) throws Exception {
         String sessionId = (request.getSessionId() != null) ? request.getSessionId() : UUID.randomUUID().toString();
         log.info("🎨 Iniciando generación de IMAGEN con {} | Sesión: {}", MODEL_NAME, sessionId);
 
-        // 1. Ingeniería de Prompt (Mejoramos la descripción para calidad visual)
         String enhancedPrompt = enhancePrompt(request.getPrompt());
-
-        // 2. Configuración (Aspect Ratio y Resolución)
         String aspectRatioStr = mapAspectRatio(request.getAspectRatio());
+
+        // 1. Configuración de la petición
         GenerateContentConfig config = GenerateContentConfig.builder()
-                .responseModalities("IMAGE") // Solo queremos la imagen
+                .responseModalities("IMAGE")
                 .imageConfig(ImageConfig.builder()
                         .aspectRatio(aspectRatioStr)
-                        .imageSize("2K") // Usamos 2K para calidad profesional (opcional: "4K")
+                        .imageSize("2K")
                         .build())
                 .build();
 
-        // 3. Llamada al Modelo (Usando el Cliente Nativo, como en la doc)
-        // El cliente usa automáticamente las credenciales de Cloud Run (OAuth2 implícito)
-        try (Client client = new Client(projectId, location)) {
+        // 2. Instanciación del Cliente (CORREGIDO: Usando Builder)
+        // Esto evita el error de "no suitable constructor"
+        try (Client client = Client.builder()
+                .project(projectId)
+                .location(location)
+                .build()) {
+
+            // 3. Llamada al Modelo
             GenerateContentResponse response = client.models.generateContent(
                     MODEL_NAME,
                     enhancedPrompt,
                     config
             );
 
-            // 4. Procesar la Respuesta
+            // 4. Procesamiento de la Respuesta (CORREGIDO: Manejo de Optionals)
             for (Part part : response.parts()) {
-                // Buscamos la parte que tiene datos binarios (la imagen)
                 if (part.inlineData().isPresent()) {
                     var blob = part.inlineData().get();
                     if (blob.data().isPresent()) {
                         byte[] imageBytes = blob.data().get();
-                        String mimeType = blob.mimeType(); // ej: "image/png"
+                        
+                        // FIX: El SDK devuelve Optional<String>, usamos orElse para obtener el String
+                        String mimeType = blob.mimeType().orElse("image/png");
 
-                        // 5. Subir a Cloud Storage
+                        // Subir a Cloud Storage
                         String fileName = "ai-gen/" + sessionId + "/" + UUID.randomUUID() + "." + getExtension(mimeType);
                         String publicUrl = cloudStorageService.uploadFile(imageBytes, mimeType, fileName);
 
-                        log.info("✅ Imagen Gemini 3 Pro generada y subida: {}", publicUrl);
+                        log.info("✅ Imagen generada y subida: {}", publicUrl);
 
                         return AiImageResponse.builder()
                                 .sessionId(sessionId)
@@ -79,25 +84,22 @@ public class ImageGeneratorService {
                     }
                 }
             }
-            throw new RuntimeException("Gemini 3 Pro no devolvió datos de imagen válidos.");
+            throw new RuntimeException("Gemini no devolvió datos de imagen válidos.");
         } catch (Exception e) {
-            log.error("❌ Error generando imagen con Gemini 3 Pro: {}", e.getMessage(), e);
+            log.error("❌ Error generando imagen: {}", e.getMessage(), e);
             throw e; // Re-lanzamos para que el Controller lo capture
         }
     }
 
-    // --- Métodos Auxiliares ---
-
     private String enhancePrompt(String originalPrompt) {
-        // Agregamos modificadores de estilo para asegurar calidad profesional
-        return originalPrompt + ", professional photograph, highly detailed, cinematic lighting, 4k resolution, hyper-realistic";
+        return originalPrompt + ", professional photograph, highly detailed, cinematic lighting, 4k resolution";
     }
 
     private String mapAspectRatio(AspectRatio ratio) {
         if (ratio == null) return "1:1";
         return switch (ratio) {
             case SQUARE -> "1:1";
-            case PORTRAIT -> "9:16"; // Gemini usa formato "ancho:alto"
+            case PORTRAIT -> "9:16";
             case LANDSCAPE -> "16:9";
         };
     }
