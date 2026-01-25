@@ -28,7 +28,7 @@ public class ImageGeneratorService {
     @Value("${spring.cloud.gcp.location:us-central1}")
     private String location;
 
-    private static final String MODEL_NAME = "gemini-3-pro-image-preview";
+    private static final String MODEL_NAME = "gemini-2.5-flash-image";
 
     public AiImageResponse generateImage(AiImageRequest request) throws Exception {
         String sessionId = (request.getSessionId() != null) ? request.getSessionId() : UUID.randomUUID().toString();
