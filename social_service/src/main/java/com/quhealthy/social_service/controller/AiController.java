@@ -29,12 +29,11 @@ public class AiController {
     private final ImageGeneratorService imageGeneratorService;
     private final VideoGeneratorService videoGeneratorService;
 
-    // ✅ GENERACIÓN DE TEXTO (INTACTO - NO TOCAR)
+    // ✅ GENERACIÓN DE TEXTO (INTACTO)
     @PostMapping("/generate-text")
     public ResponseEntity<?> generateText(@RequestBody AiTextRequest request) {
         log.info("📝 Solicitud de generación de texto recibida.");
         try {
-            // ✅ Ahora capturamos cualquier error que venga de la IA
             var response = contentGeneratorService.generatePostText(request);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -44,7 +43,7 @@ public class AiController {
         }
     }
 
-    // ✅ GENERACIÓN DE IMAGEN (CORREGIDO)
+    // ✅ GENERACIÓN DE IMAGEN (INTACTO)
     @PostMapping("/generate-image")
     public ResponseEntity<?> generateImage(@RequestBody AiImageRequest request) {
         log.info("🎨 Solicitud de generación de imagen recibida.");
@@ -53,26 +52,27 @@ public class AiController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("❌ Error Image Gen: ", e);
-            // Retornamos el error crudo usando el método auxiliar de abajo
             return ResponseEntity.internalServerError().body(buildErrorMap(e));
         }
     }
 
-    // ✅ GENERACIÓN DE VIDEO (MANTENIDO IGUAL)
+    // ✅ GENERACIÓN DE VIDEO (CORREGIDO PARA MOSTRAR ERRORES REALES)
     @PostMapping("/generate-video")
-    public ResponseEntity<AiVideoResponse> generateVideo(@Valid @RequestBody AiVideoRequest request) {
+    public ResponseEntity<?> generateVideo(@Valid @RequestBody AiVideoRequest request) {
         log.info("🎬 Solicitud de generación de video recibida.");
         try {
-            // Nota: Esto puede tardar 10-20 segundos.
+            // Nota: Debido al Polling en el servicio, esto mantendrá la conexión abierta
+            // hasta que el video esté listo (aprox 60-90 segundos).
             AiVideoResponse response = videoGeneratorService.generateVideo(request);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            log.error("Error generando video con Veo: ", e);
-            return ResponseEntity.internalServerError().build();
+            log.error("❌ Error Video Gen (Veo): ", e);
+            // AHORA SÍ: Devolvemos el error real de Google/SDK
+            return ResponseEntity.internalServerError().body(buildErrorMap(e));
         }
     }
 
-    // 🛠️ MÉTODO AUXILIAR (ESTE ES EL QUE FALTABA PARA COMPILAR)
+    // 🛠️ MÉTODO AUXILIAR
     private Map<String, String> buildErrorMap(Exception e) {
         Map<String, String> errorDetails = new HashMap<>();
         errorDetails.put("exception", e.getClass().getSimpleName());

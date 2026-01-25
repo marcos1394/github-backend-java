@@ -3,19 +3,15 @@ package com.quhealthy.social_service.service.ai;
 import com.google.genai.Client;
 import com.google.genai.types.GenerateVideosConfig;
 import com.google.genai.types.GenerateVideosOperation;
-import com.google.genai.types.GetOperationConfig;
-import com.google.genai.types.Image;
 import com.google.genai.types.Video;
 import com.quhealthy.social_service.dto.ai.AiVideoRequest;
 import com.quhealthy.social_service.dto.ai.AiVideoResponse;
-import com.quhealthy.social_service.dto.ai.VideoAspectRatio;
+import com.quhealthy.social_service.dto.ai.AspectRatio;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.io.InputStream;
-import java.net.URL;
 import java.util.UUID;
 
 @Slf4j
@@ -31,89 +27,99 @@ public class VideoGeneratorService {
     @Value("${spring.cloud.gcp.location:us-central1}")
     private String location;
 
-    public AiVideoResponse generateVideo(AiVideoRequest request) throws Exception {
-        log.info("🎬 Iniciando generación de video Veo 3.1...");
+    // 🚀 MODELO: Veo 3.1 Preview
+    private static final String MODEL_NAME = "veo-3.1-generate-preview";
 
+    public AiVideoResponse generateVideo(AiVideoRequest request) throws Exception {
+        String sessionId = (request.getSessionId() != null) ? request.getSessionId() : UUID.randomUUID().toString();
+        
+        String actualProjectId = (projectId != null && !projectId.isEmpty()) 
+                ? projectId 
+                : System.getenv("GOOGLE_CLOUD_PROJECT");
+
+        if (actualProjectId == null) {
+            throw new RuntimeException("Project ID no configurado.");
+        }
+
+        log.info("🎬 Iniciando Veo 3.1 (SDK Vertex AI) | Sesión: {}", sessionId);
+
+        String targetResolution = (request.getResolution() != null) ? request.getResolution() : "720p";
+        String targetAspectRatio = mapAspectRatio(request.getAspectRatio());
+
+        GenerateVideosConfig config = GenerateVideosConfig.builder()
+                .aspectRatio(targetAspectRatio)
+                .build();
+
+        // 🛠️ CORRECCIÓN 1: Usamos .vertexAI(true) en lugar de .backend(...)
         try (Client client = Client.builder()
-                .project(projectId)
+                .project(actualProjectId)
                 .location(location)
+                .vertexAI(true) 
                 .build()) {
 
-            GenerateVideosConfig.Builder configBuilder = GenerateVideosConfig.builder();
+            log.info("📡 Enviando prompt a Veo: '{}'", request.getPrompt());
             
-            if (request.getAspectRatio() != null) {
-                configBuilder.aspectRatio(request.getAspectRatio().getValue());
-            } else {
-                configBuilder.aspectRatio(VideoAspectRatio.LANDSCAPE_16_9.getValue());
+            // 🛠️ CORRECCIÓN 2: Agregamos 'null' como 3er argumento (Imagen base)
+            // Firma: (String model, String prompt, Image image, GenerateVideosConfig config)
+            GenerateVideosOperation operation = client.models.generateVideos(
+                    MODEL_NAME,
+                    request.getPrompt(),
+                    null, 
+                    config
+            );
+
+            log.info("⏳ Operación iniciada. Esperando renderizado (Polling)...");
+
+            // POLLING LOOP
+            while (!operation.done().orElse(false)) {
+                Thread.sleep(10000); // Espera 10 segundos
+                
+                // 🛠️ CORRECCIÓN 3: Pasamos el objeto 'operation' completo, no operation.name()
+                operation = client.operations.getVideosOperation(operation, null);
             }
 
-            if (request.isHdResolution()) {
-                configBuilder.resolution("1080p");
-            } else {
-                configBuilder.resolution("720p");
-            }
+            log.info("✨ Generación de Veo finalizada. Procesando resultado...");
 
-            Image imageInput = null;
-            if (request.getImageUrl() != null && !request.getImageUrl().isEmpty()) {
-                try (InputStream in = new URL(request.getImageUrl()).openStream()) {
-                    byte[] rawBytes = in.readAllBytes();
-                    
-                    imageInput = Image.builder()
-                            .imageBytes(rawBytes)
-                            .mimeType("image/jpeg")
+            if (operation.response().isPresent() && 
+                !operation.response().get().generatedVideos().get().isEmpty()) {
+                
+                Video video = operation.response().get().generatedVideos().get().get(0).video().get();
+
+                // 🛠️ CORRECCIÓN 4: El SDK devuelve byte[] directo, no ByteBuffer
+                if (video.videoBytes().isPresent()) {
+                    byte[] videoBytes = video.videoBytes().get();
+
+                    // Subir a Cloud Storage
+                    String fileName = "ai-gen/" + sessionId + "/" + UUID.randomUUID() + ".mp4";
+                    String publicUrl = cloudStorageService.uploadFile(videoBytes, "video/mp4", fileName);
+
+                    log.info("✅ Video Veo generado y subido: {}", publicUrl);
+
+                    return AiVideoResponse.builder()
+                            .sessionId(sessionId)
+                            .videoUrl(publicUrl)
+                            .resolution(targetResolution)
+                            .duration("8s")
                             .build();
                 }
             }
+            
+            throw new RuntimeException("Veo terminó pero no devolvió datos de video.");
 
-            String modelName = "veo-3.1-generate-preview";
-            GenerateVideosOperation operation;
-
-            if (imageInput != null) {
-                log.info("🖼️ Modo Image-to-Video activado");
-                operation = client.models.generateVideos(modelName, request.getPrompt(), imageInput, configBuilder.build());
-            } else {
-                log.info("📝 Modo Text-to-Video activado");
-                operation = client.models.generateVideos(modelName, request.getPrompt(), null, configBuilder.build());
-            }
-
-            log.info("⏳ Esperando renderizado del video...");
-
-            // Bucle de Polling
-            while (!operation.done().orElse(false)) {
-                Thread.sleep(10000); // 10 segundos
-                
-                // Configuración vacía (necesaria para la sobrecarga)
-                GetOperationConfig emptyConfig = GetOperationConfig.builder().build();
-                
-                // --- CORRECCIÓN FINAL ---
-                // En lugar de 'getVideosOperation' (que falla), usamos el método genérico 'get'.
-                // Como 'operation' es de tipo GenerateVideosOperation, Java sabe qué devolver.
-                operation = client.operations.get(operation, emptyConfig);
-            }
-
-            if (operation.response().isEmpty() || operation.response().get().generatedVideos().isEmpty()) {
-                 throw new RuntimeException("La generación de video terminó pero no hay resultados.");
-            }
-
-            Video generatedVideo = operation.response().get().generatedVideos().get().get(0).video().get();
-
-            byte[] videoBytes;
-            if (generatedVideo.videoBytes().isPresent()) {
-                videoBytes = generatedVideo.videoBytes().get();
-            } else {
-                 throw new RuntimeException("No se encontraron bytes de video.");
-            }
-
-            String fileName = "veo-" + UUID.randomUUID() + ".mp4";
-            String publicUrl = cloudStorageService.uploadFile(videoBytes, "video/mp4", "ai-generated-videos");
-
-            log.info("✅ Video generado y subido: {}", publicUrl);
-
-            return AiVideoResponse.builder()
-                    .videoUrl(publicUrl)
-                    .resolution(request.isHdResolution() ? "1080p" : "720p")
-                    .duration("8s")
-                    .build();
+        } catch (Exception e) {
+            log.error("❌ Error CRÍTICO generando video con Veo: {}", e.getMessage(), e);
+            throw e;
         }
+    }
+
+    // --- Métodos Auxiliares ---
+
+    private String mapAspectRatio(AspectRatio ratio) {
+        if (ratio == null) return "16:9";
+        return switch (ratio) {
+            case PORTRAIT -> "9:16";
+            case SQUARE -> "1:1";
+            default -> "16:9";
+        };
     }
 }

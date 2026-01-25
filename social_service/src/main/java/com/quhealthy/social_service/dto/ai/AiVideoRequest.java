@@ -5,15 +5,19 @@ import lombok.Data;
 
 @Data
 public class AiVideoRequest {
+
+    // Vital para mantener el hilo de la conversación/creación
+    private String sessionId; 
     
     @NotBlank(message = "El prompt del video es obligatorio")
-    private String prompt; // Ej: "Un león majestuoso en la sabana..."
+    private String prompt; 
 
-    // Opcional: URL de una imagen base (Image-to-Video)
-    // El frontend primero sube la imagen a /upload, recibe la URL y la manda aquí.
+    // Opcional: URL de una imagen base (Image-to-Video con Veo)
     private String imageUrl; 
 
-    private VideoAspectRatio aspectRatio; // Default 16:9
+    // Usamos el mismo Enum que en AiImageRequest para consistencia
+    private AspectRatio aspectRatio; // Default será 16:9 si viene null
 
-    private boolean hdResolution; // true = 1080p, false = 720p (Default)
+    // Cambiado de boolean a String para soportar "720p", "1080p", "4k"
+    private String resolution; 
 }
