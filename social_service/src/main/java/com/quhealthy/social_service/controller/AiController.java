@@ -48,19 +48,15 @@ public class AiController {
     @PostMapping("/generate-image")
     public ResponseEntity<?> generateImage(@RequestBody AiImageRequest request) {
         log.info("🎨 Solicitud de generación de imagen recibida.");
-        
-        // 🚨 AQUÍ ESTABA EL ERROR: Faltaba el try-catch
         try {
             var response = imageGeneratorService.generateImage(request);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            log.error("❌ Error generando imagen: ", e);
-            // Devolvemos un 500 limpio al frontend
-            return ResponseEntity.internalServerError()
-                    .body(Map.of("error", "Error generando imagen: " + e.getMessage()));
+            log.error("❌ Error Image Gen: ", e);
+            // Retornamos el error crudo para ver qué dice Google realmente
+            return ResponseEntity.internalServerError().body(buildErrorMap(e));
         }
     }
-    
 
     @PostMapping("/generate-video")
     public ResponseEntity<AiVideoResponse> generateVideo(@Valid @RequestBody AiVideoRequest request) {
