@@ -56,6 +56,8 @@ public class StripeService {
                     // URLs de retorno
                     .setSuccessUrl(successUrl)
                     .setCancelUrl(cancelUrl)
+
+                    .setClientReferenceId(String.valueOf(providerId))
                     
                     // Permitir que el usuario ponga cupones de descuento si tiene uno
                     .setAllowPromotionCodes(true) 
