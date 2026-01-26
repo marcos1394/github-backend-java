@@ -25,31 +25,41 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            .csrf(AbstractHttpConfigurer::disable) // Desactivado porque usamos JWT y no sesiones de navegador
-            .cors(cors -> cors.configurationSource(corsConfigurationSource())) // Habilitar CORS para el Frontend
+            // 1. CSRF Desactivado: Vital para APIs REST y Webhooks POST
+            .csrf(AbstractHttpConfigurer::disable)
+            
+            // 2. CORS Activado: Para que tu Frontend pueda hablar con el Backend
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+            
+            // 3. Reglas de Autorización (El Portero)
             .authorizeHttpRequests(auth -> auth
                 // 🔓 PUBLICO: Webhooks de Stripe y MercadoPago
-                // Es vital que esto sea público porque ellos no envían tu JWT, envían su propia firma.
+                // Explicación: Stripe envía una firma en el header 'Stripe-Signature', no un Bearer Token.
+                // Por eso debemos permitir la entrada (permitAll) y validar la firma dentro del Controlador.
                 .requestMatchers("/api/payments/webhooks/**").permitAll()
                 
-                // 🔓 PUBLICO: Health Checks de Cloud Run
+                // 🔓 PUBLICO: Health Checks de Google Cloud (Actuator)
                 .requestMatchers("/actuator/**").permitAll()
                 
-                // 🔒 PROTEGIDO: Todo lo demás (Activar plan manual, ver historial, cancelar)
-                // Requiere que el usuario esté logueado en el Frontend.
+                // 🔒 PROTEGIDO: Todo lo demás (Checkout, Portal, Cambios de Plan)
+                // Aquí sí exigimos el JWT del doctor.
                 .anyRequest().authenticated()
             )
+            
+            // 4. Gestión de Sesión: Stateless (No guardar cookies, usar Tokens)
             .sessionManagement(session -> session
                 .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
+            
+            // 5. Filtro JWT: Se ejecuta antes del filtro de usuario/contraseña
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
 
     /**
-     * Configuración CORS global (Idéntica a Social Service).
-     * Permite que tu Frontend (React/Next.js) pueda llamar a este microservicio.
+     * Configuración CORS global.
+     * Define qué dominios pueden hacer peticiones a este servicio.
      */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
@@ -58,8 +68,13 @@ public class SecurityConfig {
         // Dominios permitidos (Frontend Local y Producción)
         configuration.setAllowedOrigins(List.of("http://localhost:3000", "https://quhealthy.org")); 
         
+        // Métodos HTTP permitidos
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+        
+        // Headers permitidos
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin", "Access-Control-Request-Method", "Access-Control-Request-Headers"));
+        
+        // Permitir credenciales (Cookies/Auth Headers)
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
