@@ -60,6 +60,21 @@ public class WebhookHandlerService {
 
         String stripeCustomerId = session.getCustomer();
         String stripeSubscriptionId = session.getSubscription();
+// 3. Obtener el PLAN ID desde la Metadata (CORRECCIÓN AQUÍ 👇)
+        // En StripeService guardamos: metadata.put("plan_id", priceId);
+        String planId = null;
+        if (session.getMetadata() != null) {
+            planId = session.getMetadata().get("plan_id");
+        }
+
+        // Fallback de seguridad: Si por alguna razón no viene en metadata, logueamos error
+        if (planId == null) {
+            log.error("❌ Error: No se encontró 'plan_id' en la metadata de la sesión {}", session.getId());
+            // Opcional: Podrías asignar un plan default o lanzar excepción, 
+            // pero mejor retornamos para no guardar datos corruptos.
+            return; 
+        }
+
 
         log.info("✨ Checkout Completado. Creando nueva suscripción para Provider: {}", providerId);
 
@@ -76,6 +91,7 @@ public class WebhookHandlerService {
         subscription.setExternalCustomerId(stripeCustomerId);
         subscription.setExternalSubscriptionId(stripeSubscriptionId);
         subscription.setGateway(PaymentGateway.STRIPE);
+        subscription.setPlanId(planId);
         
         // Estado inicial: ACTIVE
         subscription.setStatus(SubscriptionStatus.ACTIVE);
