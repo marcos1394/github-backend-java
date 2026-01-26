@@ -1,13 +1,16 @@
 package com.quhealthy.payment_service.service;
 
 import com.quhealthy.payment_service.model.Subscription;
+import com.quhealthy.payment_service.model.enums.PaymentGateway;
 import com.quhealthy.payment_service.model.enums.SubscriptionStatus;
 import com.quhealthy.payment_service.repository.SubscriptionRepository;
 import com.stripe.model.Event;
 import com.stripe.model.Invoice;
+import com.stripe.model.checkout.Session;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -22,9 +25,71 @@ public class WebhookHandlerService {
     private final SubscriptionRepository subscriptionRepository;
 
     /**
-     * Maneja el evento invoice.payment_succeeded
-     * (Pago exitoso: Renovación mensual o primera compra)
+     * ✅ CRÍTICO: CREACIÓN DE LA SUSCRIPCIÓN
+     * Se dispara cuando el usuario completa el pago en el Checkout de Stripe.
+     * Aquí es donde nacen los registros en nuestra Base de Datos.
      */
+    @Transactional
+    public void handleCheckoutSessionCompleted(Event event) {
+        Session session = (Session) event.getDataObjectDeserializer().getObject().orElse(null);
+        if (session == null) return;
+
+        // Recuperamos el ID del Doctor (Provider) que enviamos al crear la sesión
+        String clientReferenceId = session.getClientReferenceId();
+        
+        if (clientReferenceId == null) {
+            log.error("⚠️ ALERTA: Checkout completado sin ClientReferenceId. No podemos vincular el pago a ningún usuario.");
+            return;
+        }
+
+        Long providerId;
+        try {
+            providerId = Long.parseLong(clientReferenceId);
+        } catch (NumberFormatException e) {
+            log.error("❌ Error parseando providerId: {}", clientReferenceId);
+            return;
+        }
+
+        String stripeCustomerId = session.getCustomer();
+        String stripeSubscriptionId = session.getSubscription();
+
+        log.info("✨ Checkout Completado. Creando nueva suscripción para Provider: {}", providerId);
+
+        // Verificar si ya existe para evitar duplicados (Idempotencia básica)
+        Optional<Subscription> existing = subscriptionRepository.findByExternalSubscriptionId(stripeSubscriptionId);
+        if (existing.isPresent()) {
+            log.info("ℹ️ La suscripción {} ya existe en BD. Saltando creación.", stripeSubscriptionId);
+            return;
+        }
+
+        // Crear la entidad
+        Subscription subscription = new Subscription();
+        subscription.setProviderId(providerId);
+        subscription.setExternalCustomerId(stripeCustomerId);
+        subscription.setExternalSubscriptionId(stripeSubscriptionId);
+        subscription.setGateway(PaymentGateway.STRIPE);
+        
+        // Estado inicial: ACTIVE (o TRIALING si configuraste días de prueba)
+        subscription.setStatus(SubscriptionStatus.ACTIVE);
+        
+        // Fechas de auditoría
+        LocalDateTime now = LocalDateTime.now();
+        subscription.setCreatedAt(now);
+        subscription.setUpdatedAt(now);
+        
+        // Fechas del periodo (Inicializamos con 'ahora', se corregirán con el evento invoice.payment_succeeded)
+        subscription.setCurrentPeriodStart(now);
+        subscription.setCurrentPeriodEnd(now.plusMonths(1)); 
+
+        subscriptionRepository.save(subscription);
+        log.info("✅ Suscripción creada exitosamente en BD: Provider {} -> Sub ID {}", providerId, stripeSubscriptionId);
+    }
+
+    /**
+     * 💰 PAGO EXITOSO (Renovación mensual o confirmación de primera compra)
+     * Extiende la fecha de vencimiento.
+     */
+    @Transactional
     public void handlePaymentSucceeded(Event event) {
         Invoice invoice = (Invoice) event.getDataObjectDeserializer().getObject().orElse(null);
         if (invoice == null || invoice.getSubscription() == null) return;
@@ -32,14 +97,15 @@ public class WebhookHandlerService {
         String stripeSubscriptionId = invoice.getSubscription();
         log.info("💰 Pago exitoso recibido para suscripción Stripe: {}", stripeSubscriptionId);
 
-        // Al pagar, la suscripción siempre pasa a ACTIVE
+        // Al pagar, la suscripción se confirma como ACTIVE y actualizamos la fecha fin
         updateSubscriptionStatus(stripeSubscriptionId, SubscriptionStatus.ACTIVE, invoice.getPeriodEnd());
     }
 
     /**
-     * Maneja el evento invoice.payment_failed
-     * (Tarjeta rechazada o fondos insuficientes)
+     * ⛔ PAGO FALLIDO
+     * Tarjeta rechazada, fondos insuficientes o expirada.
      */
+    @Transactional
     public void handlePaymentFailed(Event event) {
         Invoice invoice = (Invoice) event.getDataObjectDeserializer().getObject().orElse(null);
         if (invoice == null || invoice.getSubscription() == null) return;
@@ -47,15 +113,16 @@ public class WebhookHandlerService {
         String stripeSubscriptionId = invoice.getSubscription();
         log.warn("⛔ Pago fallido para suscripción Stripe: {}", stripeSubscriptionId);
 
-        // La marcamos como PAST_DUE para permitir un periodo de gracia (Dunning)
-        // El frontend debería mostrar un aviso: "Actualiza tu pago"
+        // Marcamos como PAST_DUE (Moroso). El usuario sigue teniendo acceso (Grace Period)
+        // hasta que Stripe intente cobrar X veces más y lance subscription.deleted.
         updateSubscriptionStatus(stripeSubscriptionId, SubscriptionStatus.PAST_DUE, null);
     }
 
     /**
-     * Maneja el evento customer.subscription.deleted
-     * (El usuario canceló o se acabó el periodo de gracia)
+     * 🗑️ SUSCRIPCIÓN ELIMINADA
+     * Cancelación manual o impago definitivo.
      */
+    @Transactional
     public void handleSubscriptionDeleted(Event event) {
         com.stripe.model.Subscription stripeSub = (com.stripe.model.Subscription) event.getDataObjectDeserializer().getObject().orElse(null);
         if (stripeSub == null) return;
@@ -66,9 +133,10 @@ public class WebhookHandlerService {
     }
 
     /**
-     * 🔥 NUEVO: Maneja el evento customer.subscription.updated
-     * Vital para cambios de plan, reactivaciones o periodos de prueba.
+     * 🔄 ACTUALIZACIÓN DE ESTADO (Cambio de Plan, Reactivación)
+     * Vital para mantener sincronía cuando el usuario usa el Portal de Cliente.
      */
+    @Transactional
     public void handleSubscriptionUpdated(Event event) {
         com.stripe.model.Subscription stripeSub = (com.stripe.model.Subscription) event.getDataObjectDeserializer().getObject().orElse(null);
         if (stripeSub == null) return;
@@ -77,49 +145,61 @@ public class WebhookHandlerService {
 
         SubscriptionStatus status = mapStripeStatusToLocal(stripeSub.getStatus());
 
-        // Si el estado es desconocido (ej: incomplete_expired), no hacemos nada o lo manejamos como cancelado
         if (status != null) {
             updateSubscriptionStatus(stripeSub.getId(), status, stripeSub.getCurrentPeriodEnd());
         }
     }
 
-    // --- Helpers Privados ---
+    // =================================================================
+    // 🛠️ HELPERS PRIVADOS
+    // =================================================================
 
     private void updateSubscriptionStatus(String stripeSubscriptionId, SubscriptionStatus status, Long periodEndTimestamp) {
         Optional<Subscription> subOpt = subscriptionRepository.findByExternalSubscriptionId(stripeSubscriptionId);
 
         if (subOpt.isPresent()) {
             Subscription sub = subOpt.get();
-            
-            // Solo actualizamos si el estado es diferente o si se extendió la fecha
-            if (sub.getStatus() != status || periodEndTimestamp != null) {
-                sub.setStatus(status);
-                
-                // Si viene fecha de renovación, la actualizamos
-                if (periodEndTimestamp != null) {
-                    LocalDateTime endDate = LocalDateTime.ofInstant(Instant.ofEpochSecond(periodEndTimestamp), ZoneId.systemDefault());
-                    sub.setCurrentPeriodEnd(endDate);
-                }
+            boolean changed = false;
 
+            // Actualizar estado si cambió
+            if (sub.getStatus() != status) {
+                sub.setStatus(status);
+                changed = true;
+            }
+            
+            // Actualizar fecha fin si Stripe envía una nueva (Renovación)
+            if (periodEndTimestamp != null) {
+                LocalDateTime newEndDate = LocalDateTime.ofInstant(Instant.ofEpochSecond(periodEndTimestamp), ZoneId.systemDefault());
+                if (!newEndDate.equals(sub.getCurrentPeriodEnd())) {
+                    sub.setCurrentPeriodEnd(newEndDate);
+                    changed = true;
+                }
+            }
+
+            if (changed) {
+                sub.setUpdatedAt(LocalDateTime.now());
                 subscriptionRepository.save(sub);
-                log.info("✅ BD Actualizada: Sub ID {} -> {}", sub.getId(), status);
+                log.info("✅ BD Actualizada: Sub ID {} -> Estado: {} | Fin: {}", sub.getId(), status, sub.getCurrentPeriodEnd());
             }
         } else {
-            // Nota: Es normal que esto pase en la creación inicial (checkout.session.completed)
-            // antes de que nuestra BD sepa de la suscripción.
-            log.warn("⚠️ Webhook recibido para suscripción desconocida: {}", stripeSubscriptionId);
+            // NOTA: Si llega aquí en 'payment_succeeded' antes que 'checkout.completed' (Race Condition),
+            // es normal ver este warning. El evento de checkout llegará milisegundos después y creará el registro.
+            log.warn("⚠️ Webhook recibido para suscripción {} que aun no existe en BD local.", stripeSubscriptionId);
         }
     }
 
     private SubscriptionStatus mapStripeStatusToLocal(String stripeStatus) {
+        if (stripeStatus == null) return null;
         switch (stripeStatus) {
             case "active": return SubscriptionStatus.ACTIVE;
             case "past_due": return SubscriptionStatus.PAST_DUE;
             case "canceled": return SubscriptionStatus.CANCELED;
             case "trialing": return SubscriptionStatus.TRIALING;
             case "unpaid": return SubscriptionStatus.PAST_DUE; 
-            case "incomplete": return SubscriptionStatus.PENDING; // Esperando primer pago
-            default: return null; // Ignorar otros estados
+            case "incomplete": return SubscriptionStatus.PENDING;
+            case "incomplete_expired": return SubscriptionStatus.CANCELED;
+            case "paused": return SubscriptionStatus.PAST_DUE; // O crear un estado PAUSED si lo tienes
+            default: return null;
         }
     }
 }

@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class WebhookController {
 
-    // Se inyecta desde application.properties (que a su vez lee la variable de entorno de GCP)
+    // Se inyecta desde application.properties
     @Value("${application.stripe.webhook-secret}")
     private String stripeWebhookSecret;
 
@@ -31,12 +31,11 @@ public class WebhookController {
         // =================================================================
         // 1. VALIDACIÓN DE SEGURIDAD (CRÍTICO)
         // =================================================================
-        // Verificamos que la petición realmente venga de Stripe usando la firma criptográfica.
         Event event;
         try {
             event = Webhook.constructEvent(payload, sigHeader, stripeWebhookSecret);
         } catch (SignatureVerificationException e) {
-            log.error("⚠️ ALERTA DE SEGURIDAD: Firma de Webhook inválida. Posible intento de ataque desde IP desconocida.");
+            log.error("⚠️ ALERTA DE SEGURIDAD: Firma de Webhook inválida. Posible ataque.");
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid Signature");
         } catch (Exception e) {
             log.error("❌ Error técnico procesando payload de webhook: {}", e.getMessage());
@@ -47,43 +46,44 @@ public class WebhookController {
         // 2. ENRUTAMIENTO DE EVENTOS (Lógica de Negocio)
         // =================================================================
         try {
-            // Log para trazar qué evento llegó (útil en Cloud Run Logs)
             log.debug("📩 Procesando evento Stripe: [Type: {}] [ID: {}]", event.getType(), event.getId());
 
             switch (event.getType()) {
                 
-                // ✅ PAGO EXITOSO (Renovación o Primera Compra)
+                // 🆕 CREACIÓN DE SUSCRIPCIÓN (¡ESTO ES LO QUE FALTABA!)
+                // Se dispara justo al terminar la compra. Crea el registro en BD.
+                case "checkout.session.completed":
+                    webhookHandlerService.handleCheckoutSessionCompleted(event);
+                    break;
+
+                // ✅ PAGO EXITOSO (Renovación o confirmación)
                 case "invoice.payment_succeeded":
                     webhookHandlerService.handlePaymentSucceeded(event);
                     break;
 
-                // ❌ PAGO FALLIDO (Tarjeta rechazada, fondos insuficientes)
+                // ❌ PAGO FALLIDO
                 case "invoice.payment_failed":
                     webhookHandlerService.handlePaymentFailed(event);
                     break;
 
-                // 🔄 ACTUALIZACIÓN DE SUSCRIPCIÓN (Cambio de Plan, Reactivación, Pause)
-                // Este es el que faltaba y es vital para mantener el estado sincronizado.
+                // 🔄 ACTUALIZACIÓN (Cambio de Plan, etc.)
                 case "customer.subscription.updated":
                     webhookHandlerService.handleSubscriptionUpdated(event);
                     break;
 
-                // 🗑️ SUSCRIPCIÓN ELIMINADA (Cancelación definitiva)
+                // 🗑️ ELIMINACIÓN
                 case "customer.subscription.deleted":
                     webhookHandlerService.handleSubscriptionDeleted(event);
                     break;
 
-                // --- EVENTOS SECUNDARIOS (Para limpiar logs) ---
-                
-                // 'invoice.paid' ocurre justo antes de 'payment_succeeded'. 
-                // Lo reconocemos para no ver "Evento ignorado" en los logs, pero no duplicamos lógica.
+                // --- EVENTOS SECUNDARIOS (Ignorar ruido) ---
                 case "invoice.paid":
                 case "invoice.finalized":
-                case "checkout.session.completed":
+                case "invoice.created": // A veces llega antes, solo ruido
                     log.info("ℹ️ Evento informativo recibido y reconocido: {}", event.getType());
                     break;
 
-                // ❓ CUALQUIER OTRO EVENTO
+                // ❓ DESCONOCIDO
                 default:
                     log.debug("Event ignored (No handler defined): {}", event.getType());
             }
@@ -91,9 +91,8 @@ public class WebhookController {
             return ResponseEntity.ok("Handled");
 
         } catch (Exception e) {
-            // Capturamos cualquier error de lógica (NullPointer, DB exception) para no tirar el servidor
-            // Stripe reintentará enviar el webhook más tarde si devolvemos 500.
             log.error("❌ Error manejando lógica de negocio para evento {}: {}", event.getType(), e.getMessage(), e);
+            // Retornamos 500 para que Stripe reintente enviar el webhook más tarde
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Handler Error");
         }
     }
