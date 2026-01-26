@@ -5,7 +5,9 @@ import com.quhealthy.payment_service.model.enums.PaymentGateway;
 import com.quhealthy.payment_service.model.enums.SubscriptionStatus;
 import com.quhealthy.payment_service.repository.SubscriptionRepository;
 import com.stripe.model.Event;
+import com.stripe.model.EventDataObjectDeserializer;
 import com.stripe.model.Invoice;
+import com.stripe.model.StripeObject;
 import com.stripe.model.checkout.Session;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,8 +33,13 @@ public class WebhookHandlerService {
      */
     @Transactional
     public void handleCheckoutSessionCompleted(Event event) {
-        Session session = (Session) event.getDataObjectDeserializer().getObject().orElse(null);
-        if (session == null) return;
+        // 🛠️ FIX DE ROBUSTEZ: Usamos el helper 'deserialize' para evitar errores por versión de API
+        Session session = (Session) deserialize(event);
+        
+        if (session == null) {
+            log.error("❌ ERROR CRÍTICO: No se pudo deserializar la Sesión del evento {}. El JSON no es interpretable.", event.getId());
+            return;
+        }
 
         // Recuperamos el ID del Doctor (Provider) que enviamos al crear la sesión
         String clientReferenceId = session.getClientReferenceId();
@@ -69,7 +76,7 @@ public class WebhookHandlerService {
         subscription.setExternalSubscriptionId(stripeSubscriptionId);
         subscription.setGateway(PaymentGateway.STRIPE);
         
-        // Estado inicial: ACTIVE (o TRIALING si configuraste días de prueba)
+        // Estado inicial: ACTIVE
         subscription.setStatus(SubscriptionStatus.ACTIVE);
         
         // Fechas de auditoría
@@ -91,7 +98,7 @@ public class WebhookHandlerService {
      */
     @Transactional
     public void handlePaymentSucceeded(Event event) {
-        Invoice invoice = (Invoice) event.getDataObjectDeserializer().getObject().orElse(null);
+        Invoice invoice = (Invoice) deserialize(event);
         if (invoice == null || invoice.getSubscription() == null) return;
 
         String stripeSubscriptionId = invoice.getSubscription();
@@ -107,14 +114,13 @@ public class WebhookHandlerService {
      */
     @Transactional
     public void handlePaymentFailed(Event event) {
-        Invoice invoice = (Invoice) event.getDataObjectDeserializer().getObject().orElse(null);
+        Invoice invoice = (Invoice) deserialize(event);
         if (invoice == null || invoice.getSubscription() == null) return;
 
         String stripeSubscriptionId = invoice.getSubscription();
         log.warn("⛔ Pago fallido para suscripción Stripe: {}", stripeSubscriptionId);
 
         // Marcamos como PAST_DUE (Moroso). El usuario sigue teniendo acceso (Grace Period)
-        // hasta que Stripe intente cobrar X veces más y lance subscription.deleted.
         updateSubscriptionStatus(stripeSubscriptionId, SubscriptionStatus.PAST_DUE, null);
     }
 
@@ -124,7 +130,7 @@ public class WebhookHandlerService {
      */
     @Transactional
     public void handleSubscriptionDeleted(Event event) {
-        com.stripe.model.Subscription stripeSub = (com.stripe.model.Subscription) event.getDataObjectDeserializer().getObject().orElse(null);
+        com.stripe.model.Subscription stripeSub = (com.stripe.model.Subscription) deserialize(event);
         if (stripeSub == null) return;
 
         log.info("🗑️ Suscripción eliminada/cancelada en Stripe: {}", stripeSub.getId());
@@ -138,7 +144,7 @@ public class WebhookHandlerService {
      */
     @Transactional
     public void handleSubscriptionUpdated(Event event) {
-        com.stripe.model.Subscription stripeSub = (com.stripe.model.Subscription) event.getDataObjectDeserializer().getObject().orElse(null);
+        com.stripe.model.Subscription stripeSub = (com.stripe.model.Subscription) deserialize(event);
         if (stripeSub == null) return;
 
         log.info("🔄 Actualización de suscripción recibida: {} -> Estado Stripe: {}", stripeSub.getId(), stripeSub.getStatus());
@@ -151,7 +157,28 @@ public class WebhookHandlerService {
     }
 
     // =================================================================
-    // 🛠️ HELPERS PRIVADOS
+    // 🛠️ HELPER DE DESERIALIZACIÓN (EL SALVAVIDAS) 🛟
+    // =================================================================
+    /**
+     * Este método es vital. La librería de Stripe Java a veces falla al leer JSONs
+     * generados por una versión de API más nueva (mismatch).
+     * Este helper intenta leerlo de forma segura, y si falla, fuerza la lectura (unsafe).
+     */
+    private StripeObject deserialize(Event event) {
+        EventDataObjectDeserializer deserializer = event.getDataObjectDeserializer();
+        
+        if (deserializer.getObject().isPresent()) {
+            return deserializer.getObject().get();
+        } else {
+            // Si llegamos aquí, es porque hay campos nuevos en el JSON que Java no conoce.
+            // Usamos deserializeUnsafe() para forzar la lectura del objeto de todas formas.
+            log.warn("⚠️ Advertencia de Versión Stripe: Usando deserializeUnsafe() para evento {}", event.getType());
+            return deserializer.deserializeUnsafe();
+        }
+    }
+
+    // =================================================================
+    // 🛠️ OTROS HELPERS PRIVADOS
     // =================================================================
 
     private void updateSubscriptionStatus(String stripeSubscriptionId, SubscriptionStatus status, Long periodEndTimestamp) {
