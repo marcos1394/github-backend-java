@@ -6,6 +6,7 @@ import com.quhealthy.payment_service.model.enums.SubscriptionStatus;
 import com.quhealthy.payment_service.repository.SubscriptionRepository;
 import com.stripe.model.Event;
 import com.stripe.model.EventDataObjectDeserializer;
+import com.stripe.exception.EventDataObjectDeserializationException; // 👈 Importamos la excepción
 import com.stripe.model.Invoice;
 import com.stripe.model.StripeObject;
 import com.stripe.model.checkout.Session;
@@ -159,23 +160,28 @@ public class WebhookHandlerService {
     // =================================================================
     // 🛠️ HELPER DE DESERIALIZACIÓN (EL SALVAVIDAS) 🛟
     // =================================================================
-    /**
-     * Este método es vital. La librería de Stripe Java a veces falla al leer JSONs
-     * generados por una versión de API más nueva (mismatch).
-     * Este helper intenta leerlo de forma segura, y si falla, fuerza la lectura (unsafe).
-     */
+    
+    // =================================================================
+    // 🛠️ HELPER DE DESERIALIZACIÓN (CORREGIDO) ✅
+    // =================================================================
     private StripeObject deserialize(Event event) {
         EventDataObjectDeserializer deserializer = event.getDataObjectDeserializer();
         
         if (deserializer.getObject().isPresent()) {
             return deserializer.getObject().get();
         } else {
-            // Si llegamos aquí, es porque hay campos nuevos en el JSON que Java no conoce.
-            // Usamos deserializeUnsafe() para forzar la lectura del objeto de todas formas.
-            log.warn("⚠️ Advertencia de Versión Stripe: Usando deserializeUnsafe() para evento {}", event.getType());
-            return deserializer.deserializeUnsafe();
+            // AQUÍ ESTABA EL ERROR DE COMPILACIÓN.
+            // deserializeUnsafe() lanza una excepción checked, hay que atraparla.
+            try {
+                log.warn("⚠️ Advertencia de Versión Stripe: Usando deserializeUnsafe() para evento {}", event.getType());
+                return deserializer.deserializeUnsafe();
+            } catch (EventDataObjectDeserializationException e) {
+                log.error("❌ FALLO FATAL: No se pudo deserializar el evento {} ni siquiera de forma insegura. Error: {}", event.getId(), e.getMessage());
+                return null;
+            }
         }
     }
+
 
     // =================================================================
     // 🛠️ OTROS HELPERS PRIVADOS
