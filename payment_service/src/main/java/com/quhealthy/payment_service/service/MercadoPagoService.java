@@ -1,79 +1,113 @@
 package com.quhealthy.payment_service.service;
 
+import com.mercadopago.MercadoPagoConfig;
+import com.mercadopago.client.preapproval.PreApprovalAutoRecurringCreateRequest; // 👈 Importante
 import com.mercadopago.client.preapproval.PreapprovalClient;
 import com.mercadopago.client.preapproval.PreapprovalCreateRequest;
-// 👇 CORRECCIÓN: Usamos el nombre exacto que aparece en tu lista de archivos
-import com.mercadopago.client.preapproval.PreApprovalAutoRecurringCreateRequest;
-import com.mercadopago.core.MPRequestOptions;
+import com.mercadopago.client.preapproval.PreapprovalUpdateRequest;
 import com.mercadopago.exceptions.MPApiException;
 import com.mercadopago.exceptions.MPException;
 import com.mercadopago.resources.preapproval.Preapproval;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.util.UUID;
 
 @Slf4j
 @Service
 public class MercadoPagoService {
 
-    /**
-     * Crea una suscripción (Preapproval) usando los nombres de clase exactos del SDK.
-     */
-    public Preapproval createSubscription(Long providerId, String userEmail, String backUrl, String planId, BigDecimal price) {
+    @Value("${application.mp.access-token}")
+    private String accessToken;
+
+    @PostConstruct
+    public void init() {
+        if (accessToken == null || accessToken.isBlank()) {
+            log.error("❌ NO se encontró el Access Token de MercadoPago.");
+        } else {
+            MercadoPagoConfig.setAccessToken(accessToken);
+            log.info("🟢 MercadoPago SDK inicializado correctamente.");
+        }
+    }
+
+    public Preapproval createSubscription(Long providerId, String userEmail, String backUrl, String mpPlanId, BigDecimal price) {
         try {
-            log.info("🔵 Creando suscripción MercadoPago para Provider: {}", providerId);
+            log.info("🔵 Iniciando Suscripción MP [Provider: {}] [Plan ID: {}]", providerId, mpPlanId);
 
             PreapprovalClient client = new PreapprovalClient();
 
-            // Referencia externa única
-            String externalRef = "PROV_" + providerId + "_PLAN_" + planId + "_" + UUID.randomUUID().toString().substring(0, 8);
+            // TRUCO ENTERPRISE:
+            // Como el SDK no nos deja pasar el Plan ID directo, lo metemos en la referencia externa
+            // para poder recuperarlo cuando llegue el Webhook.
+            // Formato: "ID_USUARIO###ID_PLAN"
+            String compositeRef = providerId + "###" + mpPlanId;
 
-            // Construcción del Request
+            // Construimos la recurrencia manualmente porque el SDK no acepta planId directo
+            PreApprovalAutoRecurringCreateRequest autoRecurring = PreApprovalAutoRecurringCreateRequest.builder()
+                    .frequency(1)
+                    .frequencyType("months")
+                    .transactionAmount(price)
+                    .currencyId("MXN")
+                    .build();
+
             PreapprovalCreateRequest request = PreapprovalCreateRequest.builder()
-                    .reason("Suscripción QuHealthy - " + planId)
-                    .externalReference(externalRef)
                     .payerEmail(userEmail)
                     .backUrl(backUrl)
-                    .autoRecurring(
-                            // 👇 CORRECCIÓN: Usamos la clase PreApprovalAutoRecurringCreateRequest
-                            PreApprovalAutoRecurringCreateRequest.builder()
-                                    .frequency(1)
-                                    .frequencyType("months")
-                                    .transactionAmount(price)
-                                    .currencyId("MXN") // Ajusta a tu moneda local
-                                    .build()
-                    )
+                    .reason("Suscripción QuHealthy")
+                    .externalReference(compositeRef) // 👈 Aquí viaja el dato oculto
+                    .autoRecurring(autoRecurring)    // 👈 Configuración manual
                     .status("pending")
                     .build();
-            
-            // Gestión del Token (Opcional si ya está en config global)
-            String token = System.getenv("MP_ACCESS_TOKEN");
-            MPRequestOptions options = null;
-            
-            if(token != null && !token.isBlank()) {
-                 options = MPRequestOptions.builder()
-                    .accessToken(token)
-                    .build();
-            }
 
-            // Ejecución
-            if (options != null) {
-                return client.create(request, options);
-            } else {
-                return client.create(request);
-            }
+            Preapproval preapproval = client.create(request);
+            
+            log.info("✅ Link de Suscripción MP creado: {}", preapproval.getInitPoint());
+            return preapproval;
 
+        } catch (MPApiException e) {
+            log.error("❌ Error API MercadoPago: {} - {}", e.getStatusCode(), e.getApiResponse().getContent());
+            throw new RuntimeException("Error de configuración en MercadoPago: " + e.getMessage());
+        } catch (MPException e) {
+            log.error("❌ Error de Conexión MercadoPago: {}", e.getMessage());
+            throw new RuntimeException("Error de comunicación con la pasarela de pagos.");
+        }
+    }
+
+    public Preapproval getSubscription(String preapprovalId) {
+        try {
+            PreapprovalClient client = new PreapprovalClient();
+            return client.get(preapprovalId);
         } catch (MPException | MPApiException e) {
-            log.error("❌ Error creando suscripción MercadoPago: {}", e.getMessage());
-            if (e instanceof MPApiException) {
-                MPApiException apiEx = (MPApiException) e;
-                if (apiEx.getApiResponse() != null) {
-                    log.error("MP API Response: {}", apiEx.getApiResponse().getContent());
-                }
-            }
-            throw new RuntimeException("Error al conectar con la pasarela de pagos (MercadoPago)", e);
+            log.error("❌ Error recuperando suscripción MP {}: {}", preapprovalId, e.getMessage());
+            throw new RuntimeException("No se pudo sincronizar con MercadoPago.");
+        }
+    }
+
+    public void cancelSubscription(String preapprovalId) {
+        try {
+            PreapprovalClient client = new PreapprovalClient();
+            PreapprovalUpdateRequest request = PreapprovalUpdateRequest.builder()
+                    .status("cancelled")
+                    .build();
+            client.update(preapprovalId, request);
+            log.info("🛑 Suscripción MP {} cancelada.", preapprovalId);
+        } catch (MPException | MPApiException e) {
+            log.error("❌ Error cancelando suscripción MP: {}", e.getMessage());
+        }
+    }
+    
+    public void pauseSubscription(String preapprovalId) {
+        try {
+            PreapprovalClient client = new PreapprovalClient();
+            PreapprovalUpdateRequest request = PreapprovalUpdateRequest.builder()
+                    .status("paused")
+                    .build();
+            client.update(preapprovalId, request);
+            log.info("⏸️ Suscripción MP {} pausada.", preapprovalId);
+        } catch (MPException | MPApiException e) {
+            log.error("❌ Error pausando suscripción MP: {}", e.getMessage());
         }
     }
 }
