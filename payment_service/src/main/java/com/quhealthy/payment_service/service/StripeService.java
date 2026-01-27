@@ -264,4 +264,17 @@ public class StripeService {
             return null; // No rompemos el flujo si falla esto
         }
     }
+
+    /**
+     * Sincronización Manual: Consulta el estado real en Stripe.
+     * Vital para recuperar suscripciones desincronizadas si fallaron los webhooks.
+     */
+    public com.stripe.model.Subscription retrieveSubscription(String subscriptionId) {
+        try {
+            return com.stripe.model.Subscription.retrieve(subscriptionId);
+        } catch (StripeException e) {
+            log.error("❌ Error recuperando suscripción de Stripe: {}", e.getMessage());
+            throw new RuntimeException("No se pudo sincronizar con Stripe.");
+        }
+    }
 }
