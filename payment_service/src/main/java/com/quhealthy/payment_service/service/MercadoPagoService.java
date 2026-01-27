@@ -19,7 +19,7 @@ import java.math.BigDecimal;
 @Service
 public class MercadoPagoService {
 
-    @Value("${application.mp.access-token}")
+    @Value("${application.mercadopago.access-token}")
     private String accessToken;
 
     @PostConstruct

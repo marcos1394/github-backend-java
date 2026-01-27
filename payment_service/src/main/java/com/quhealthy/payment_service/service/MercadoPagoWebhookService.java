@@ -27,7 +27,7 @@ public class MercadoPagoWebhookService {
 
     private final SubscriptionRepository subscriptionRepository;
 
-    @Value("${application.mp.access-token}")
+    @Value("${application.mercadopago.access-token}")
     private String accessToken;
 
     @Transactional
