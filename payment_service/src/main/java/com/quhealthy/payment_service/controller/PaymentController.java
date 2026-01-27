@@ -2,7 +2,9 @@ package com.quhealthy.payment_service.controller;
 
 import com.mercadopago.resources.preapproval.Preapproval;
 import com.quhealthy.payment_service.dto.CreateCheckoutRequest;
+import com.quhealthy.payment_service.model.Plan;
 import com.quhealthy.payment_service.model.Subscription;
+import com.quhealthy.payment_service.repository.PlanRepository;
 import com.quhealthy.payment_service.repository.SubscriptionRepository;
 import com.quhealthy.payment_service.service.MercadoPagoService;
 import com.quhealthy.payment_service.service.StripeService;
@@ -17,7 +19,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.time.LocalDateTime; // 👈 ESTE ERA EL IMPORT QUE FALTABA
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Map;
 import java.util.Optional;
@@ -31,6 +33,9 @@ public class PaymentController {
     private final StripeService stripeService;
     private final MercadoPagoService mercadoPagoService;
     private final SubscriptionRepository subscriptionRepository;
+    
+    // 👇 NUEVO: Repositorio para buscar precios y nombres reales
+    private final PlanRepository planRepository;
 
     // ==========================================
     // 1. INICIAR COMPRA (Checkout)
@@ -41,6 +46,9 @@ public class PaymentController {
         // En producción, obtén el email real del usuario vía Auth Service
         String userEmail = "provider_" + providerId + "@quhealthy.com"; 
 
+        // -------------------------------------------------------------------
+        // OPCIÓN A: STRIPE
+        // -------------------------------------------------------------------
         if (request.getGateway() == com.quhealthy.payment_service.model.enums.PaymentGateway.STRIPE) {
             
             // Buscar ID de cliente previo para no duplicarlo
@@ -50,8 +58,7 @@ public class PaymentController {
                     .findFirst()
                     .orElse(null);
 
-            // CORRECCIÓN: Definimos trialDays como null (Modelo Freemium, pago inmediato)
-            // Si en el futuro quieres dar 7 días gratis, cambias esto a 7.
+            // Modelo Freemium (pago inmediato, sin trial)
             Integer trialDays = null;
 
             Session session = stripeService.createSubscriptionCheckout(
@@ -61,20 +68,32 @@ public class PaymentController {
                     request.getSuccessUrl(),
                     request.getCancelUrl(),
                     existingCustomerId,
-                    trialDays // 👈 AGREGADO: El 7mo argumento que faltaba
+                    trialDays
             );
             return ResponseEntity.ok(Map.of("url", session.getUrl()));
 
+        // -------------------------------------------------------------------
+        // OPCIÓN B: MERCADO PAGO
+        // -------------------------------------------------------------------
         } else if (request.getGateway() == com.quhealthy.payment_service.model.enums.PaymentGateway.MERCADOPAGO) {
             
-            BigDecimal price = new BigDecimal("200.00"); // Ejemplo
-            
+            // 1. BUSCAR EL PLAN REAL EN BD (Seguridad y UX)
+            // Usamos el ID de MP que manda el frontend (ej: b1dbf...) para buscar en nuestra tabla 'plans'
+            Plan plan = planRepository.findByMpPlanId(request.getPlanId())
+                    .orElseThrow(() -> new RuntimeException("El plan de MercadoPago solicitado no existe o no está configurado."));
+
+            // 2. EXTRAER DATOS REALES
+            BigDecimal realPrice = plan.getPrice(); // Ej: 450.00
+            String realName = plan.getName();      // Ej: "Plan Básico"
+
+            // 3. GENERAR LINK DE SUSCRIPCIÓN
             Preapproval preapproval = mercadoPagoService.createSubscription(
                     providerId,
                     userEmail,
                     request.getSuccessUrl(),
-                    request.getPlanId(),
-                    price
+                    request.getPlanId(), // ID técnico de MP
+                    realPrice,           // Precio Real de BD
+                    realName             // Nombre Real de BD (para el título en checkout)
             );
             return ResponseEntity.ok(Map.of("url", preapproval.getInitPoint()));
         }
@@ -121,19 +140,12 @@ public class PaymentController {
         return ResponseEntity.badRequest().body("No tienes una suscripción activa o la pasarela no soporta cambio directo.");
     }
 
-    // 🔒 Helper User ID
-    private Long getAuthenticatedUserId() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        return (Long) auth.getPrincipal();
-    }
-
     // ==========================================
     // 4. SINCRONIZACIÓN MANUAL (Fail-safe Enterprise)
     // ==========================================
     /**
-     * Fuerza una consulta a Stripe para alinear el estado local con la realidad.
-     * Útil si fallan los webhooks o si el sistema estuvo caído.
-     * Actualiza: Estado, Fecha Fin, Fecha Inicio y Plan (si hubo cambio externo).
+     * Fuerza una consulta a la pasarela (Stripe/MP) para alinear el estado local.
+     * Útil si fallan los webhooks.
      */
     @GetMapping("/subscription/sync")
     public ResponseEntity<?> syncSubscriptionStatus() {
@@ -149,19 +161,16 @@ public class PaymentController {
 
         Subscription localSub = localSubOpt.get();
 
-        // 2. Solo sincronizamos si es Stripe (MercadoPago tiene otra lógica)
+        // 2. Solo sincronizamos si es Stripe (MercadoPago tiene su propia lógica en desarrollo)
         if (localSub.getGateway() == com.quhealthy.payment_service.model.enums.PaymentGateway.STRIPE) {
             try {
                 // 3. Consultamos a la fuente de la verdad (Stripe API)
-                // Asegúrate de tener este método público en tu StripeService
                 com.stripe.model.Subscription stripeSub = stripeService.retrieveSubscription(localSub.getExternalSubscriptionId());
                 
                 boolean hasChanges = false;
                 StringBuilder changesLog = new StringBuilder();
 
-                // -------------------------------------------------------
                 // A. Sincronización de ESTADO
-                // -------------------------------------------------------
                 com.quhealthy.payment_service.model.enums.SubscriptionStatus realStatus = mapStripeStatus(stripeSub.getStatus());
                 if (localSub.getStatus() != realStatus) {
                     changesLog.append(String.format("[Status: %s -> %s] ", localSub.getStatus(), realStatus));
@@ -169,30 +178,21 @@ public class PaymentController {
                     hasChanges = true;
                 }
 
-                // -------------------------------------------------------
-                // B. Sincronización de FECHAS (Crítico para el acceso)
-                // -------------------------------------------------------
-                // Stripe usa Unix Timestamp (segundos), Java usa LocalDateTime. Convertimos.
-                LocalDateTime stripePeriodEnd = LocalDateTime.ofInstant(java.time.Instant.ofEpochSecond(stripeSub.getCurrentPeriodEnd()), java.time.ZoneId.systemDefault());
-                LocalDateTime stripePeriodStart = LocalDateTime.ofInstant(java.time.Instant.ofEpochSecond(stripeSub.getCurrentPeriodStart()), java.time.ZoneId.systemDefault());
+                // B. Sincronización de FECHAS
+                LocalDateTime stripePeriodEnd = LocalDateTime.ofInstant(Instant.ofEpochSecond(stripeSub.getCurrentPeriodEnd()), ZoneId.systemDefault());
+                LocalDateTime stripePeriodStart = LocalDateTime.ofInstant(Instant.ofEpochSecond(stripeSub.getCurrentPeriodStart()), ZoneId.systemDefault());
 
-                // Validamos Period End (Tolerancia de segundos no importa, comparamos igualdad de objeto o diferencia significativa)
                 if (!stripePeriodEnd.equals(localSub.getCurrentPeriodEnd())) {
                     changesLog.append(String.format("[End: %s -> %s] ", localSub.getCurrentPeriodEnd(), stripePeriodEnd));
                     localSub.setCurrentPeriodEnd(stripePeriodEnd);
                     hasChanges = true;
                 }
-
-                // Validamos Period Start
                 if (!stripePeriodStart.equals(localSub.getCurrentPeriodStart())) {
                     localSub.setCurrentPeriodStart(stripePeriodStart);
                     hasChanges = true;
                 }
 
-                // -------------------------------------------------------
-                // C. Sincronización de PLAN (Si lo cambiaron en Dashboard de Stripe)
-                // -------------------------------------------------------
-                // El Price ID está dentro de items -> data[0] -> price -> id
+                // C. Sincronización de PLAN
                 String realPlanId = stripeSub.getItems().getData().get(0).getPrice().getId();
                 if (!realPlanId.equals(localSub.getPlanId())) {
                     changesLog.append(String.format("[Plan: %s -> %s] ", localSub.getPlanId(), realPlanId));
@@ -200,9 +200,7 @@ public class PaymentController {
                     hasChanges = true;
                 }
 
-                // -------------------------------------------------------
-                // D. Guardado y Respuesta
-                // -------------------------------------------------------
+                // D. Guardado
                 if (hasChanges) {
                     localSub.setUpdatedAt(LocalDateTime.now());
                     subscriptionRepository.save(localSub);
@@ -227,7 +225,8 @@ public class PaymentController {
                 return ResponseEntity.internalServerError().body(Map.of("error", "Error conectando con Stripe.", "details", e.getMessage()));
             }
         }
-
+        
+        // TODO: Implementar lógica similar para MercadoPago usando mercadoPagoService.getSubscription()
         return ResponseEntity.badRequest().body(Map.of("error", "Sincronización no soportada para esta pasarela."));
     }
 
@@ -247,4 +246,9 @@ public class PaymentController {
         }
     }
 
+    // 🔒 Helper User ID
+    private Long getAuthenticatedUserId() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return (Long) auth.getPrincipal();
+    }
 }
