@@ -11,10 +11,12 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class PaymentConfig {
 
+    // Coincide con: stripe.api-key=${STRIPE_API_KEY} en tu properties
     @Value("${stripe.api-key}")
     private String stripeApiKey;
 
-    @Value("${mercadopago.access-token}")
+    // 👇 CORRECCIÓN: Ahora coincide con application.mercadopago.access-token
+    @Value("${application.mercadopago.access-token}")
     private String mpAccessToken;
 
     /**
