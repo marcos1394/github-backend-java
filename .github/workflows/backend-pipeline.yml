@@ -20,8 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 👇 AQUI ESTÁN TODOS TUS SERVICIOS (INCLUYENDO CATALOG)
-        service: [auth_service, onboarding_service, social_service, payment_service, review_service, catalog_service]
+        # 👇 AQUI ESTÁN TODOS TUS SERVICIOS (INCLUYENDO CATALOG Y APPOINTMENT)
+        service: [auth_service, onboarding_service, social_service, payment_service, review_service, catalog_service, appointment_service]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -139,10 +139,20 @@ jobs:
               DB_PASSWORD=application_db_password:latest
               JWT_SECRET=application_jwt_secret:latest
 
-          # --- CONFIGURACIÓN CATALOG SERVICE (NUEVO 📦) ---
+          # --- CONFIGURACIÓN CATALOG SERVICE ---
           - service-name: catalog-service
             directory: catalog_service
             # Secretos: DB y JWT (Lectura/Escritura de servicios)
+            secrets-list: |
+              DB_URL=application_db_url:latest
+              DB_USER=application_db_user:latest
+              DB_PASSWORD=application_db_password:latest
+              JWT_SECRET=application_jwt_secret:latest
+
+          # --- CONFIGURACIÓN APPOINTMENT SERVICE (NUEVO 📅) ---
+          - service-name: appointment-service
+            directory: appointment_service
+            # Secretos: DB y JWT (Feign Clients usan URLs, no secrets. Pub/Sub usa identidad)
             secrets-list: |
               DB_URL=application_db_url:latest
               DB_USER=application_db_user:latest
