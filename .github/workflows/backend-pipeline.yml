@@ -20,8 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 👇 AQUI ESTÁN TODOS TUS SERVICIOS (INCLUYENDO REVIEW)
-        service: [auth_service, onboarding_service, social_service, payment_service, review_service]
+        # 👇 AQUI ESTÁN TODOS TUS SERVICIOS (INCLUYENDO CATALOG)
+        service: [auth_service, onboarding_service, social_service, payment_service, review_service, catalog_service]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -129,10 +129,20 @@ jobs:
               MP_ACCESS_TOKEN=application_mp_access_token:latest
               MP_WEBHOOK_SECRET=application_mp_webhook_secret:latest
 
-          # --- CONFIGURACIÓN REVIEW SERVICE (NUEVO 🚀) ---
+          # --- CONFIGURACIÓN REVIEW SERVICE ---
           - service-name: review-service
             directory: review_service
-            # Secretos: DB y JWT (Google Pub/Sub usa la identidad del servicio, no requiere API Key explícita)
+            # Secretos: DB y JWT (Google Pub/Sub usa la identidad del servicio)
+            secrets-list: |
+              DB_URL=application_db_url:latest
+              DB_USER=application_db_user:latest
+              DB_PASSWORD=application_db_password:latest
+              JWT_SECRET=application_jwt_secret:latest
+
+          # --- CONFIGURACIÓN CATALOG SERVICE (NUEVO 📦) ---
+          - service-name: catalog-service
+            directory: catalog_service
+            # Secretos: DB y JWT (Lectura/Escritura de servicios)
             secrets-list: |
               DB_URL=application_db_url:latest
               DB_USER=application_db_user:latest
@@ -179,9 +189,6 @@ jobs:
           image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ matrix.service-name }}:${{ github.sha }}
           
           # Variables de entorno públicas
-          # Cloud Run inyecta PORT=8080 automáticamente.
-          # REVIEW_SERVICE: La variable REVIEWS_TOPIC_NAME tiene un default en properties, 
-          # pero si quisieras cambiar el nombre del tema desde aquí, podrías agregarla.
           env_vars: |
             SPRING_PROFILES_ACTIVE=prod
           
