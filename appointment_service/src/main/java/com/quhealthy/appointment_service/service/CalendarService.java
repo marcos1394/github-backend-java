@@ -15,7 +15,6 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -28,10 +27,15 @@ public class CalendarService {
 
     private final ProviderScheduleRepository scheduleRepository;
     private final TimeBlockRepository timeBlockRepository;
-    private final AppointmentRepository appointmentRepository; // Ya existente en este microservicio
+    private final AppointmentRepository appointmentRepository;
+
+    // =================================================================
+    // 🟠 GESTIÓN DE HORARIOS (Escritura)
+    // =================================================================
 
     /**
-     * Actualizar horarios (Estrategia: Wipe & Replace)
+     * Actualizar horarios base (Estrategia: Wipe & Replace).
+     * Borra lo que había y pone la nueva configuración semanal.
      */
     @Transactional
     public List<ProviderSchedule> updateOperatingHours(Long providerId, List<ProviderSchedule> newSchedules) {
@@ -46,15 +50,44 @@ public class CalendarService {
     }
 
     /**
+     * Crear un bloqueo de tiempo (Vacaciones, Comida, etc).
+     * Este método faltaba y era causa del error de compilación.
+     */
+    @Transactional
+    public TimeBlock createTimeBlock(TimeBlock block) {
+        log.info("⛔ Guardando bloqueo para Provider ID: {} | {} - {}", 
+                block.getProviderId(), block.getStartDateTime(), block.getEndDateTime());
+        
+        // Validación básica: Inicio debe ser antes que Fin
+        if (block.getEndDateTime().isBefore(block.getStartDateTime())) {
+            throw new IllegalArgumentException("La fecha fin no puede ser anterior a la fecha inicio");
+        }
+        
+        return timeBlockRepository.save(block);
+    }
+
+    // =================================================================
+    // 🟢 GESTIÓN DE HORARIOS (Lectura)
+    // =================================================================
+
+    /**
+     * Obtener la configuración semanal del doctor.
+     * Este método faltaba y era causa del error de compilación.
+     */
+    @Transactional(readOnly = true)
+    public List<ProviderSchedule> getProviderSchedules(Long providerId) {
+        return scheduleRepository.findByProviderId(providerId);
+    }
+
+    /**
      * 🧠 LÓGICA PRINCIPAL: Calcular Slots Disponibles
-     * Migración optimizada de tu getProviderAvailability
+     * Cruza: Horario Base vs (Citas Confirmadas + Bloqueos)
      */
     @Transactional(readOnly = true)
     public List<LocalDateTime> getAvailableSlots(Long providerId, LocalDate startDate, LocalDate endDate, int durationMinutes) {
         log.info("🔍 Buscando slots para Provider {} entre {} y {} (Duración: {}m)", providerId, startDate, endDate, durationMinutes);
 
         // 1. Cargar configuración en memoria (Horarios Base)
-        // Map<DayOfWeek, Schedule> para acceso rápido
         Map<DayOfWeek, ProviderSchedule> scheduleMap = scheduleRepository.findByProviderId(providerId).stream()
                 .collect(Collectors.toMap(ProviderSchedule::getDayOfWeek, s -> s));
 
@@ -95,7 +128,6 @@ public class CalendarService {
                 }
 
                 // Avanzar al siguiente slot
-                // NOTA: Aquí puedes decidir si avanzas por 'duration' o por un 'step' fijo (ej: cada 15 min)
                 slotStart = slotStart.plusMinutes(durationMinutes); 
             }
         }
@@ -118,13 +150,13 @@ public class CalendarService {
     private boolean isOverlapping(LocalDateTime start, LocalDateTime end, List<Appointment> appts, List<TimeBlock> blocks) {
         // Checar citas
         boolean apptConflict = appts.stream().anyMatch(a -> 
-            start.isBefore(a.getEndTime()) && end.isAfter(a.getStartTime())
+            (start.isBefore(a.getEndTime()) && end.isAfter(a.getStartTime()))
         );
         if (apptConflict) return true;
 
         // Checar bloqueos manuales
         return blocks.stream().anyMatch(b -> 
-            start.isBefore(b.getEndDateTime()) && end.isAfter(b.getStartDateTime())
+            (start.isBefore(b.getEndDateTime()) && end.isAfter(b.getStartDateTime()))
         );
     }
 }

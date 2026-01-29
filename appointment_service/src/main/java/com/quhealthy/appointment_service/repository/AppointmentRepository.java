@@ -1,9 +1,6 @@
 package com.quhealthy.appointment_service.repository;
 
 import com.quhealthy.appointment_service.model.Appointment;
-import com.quhealthy.appointment_service.model.TimeBlock;
-import com.quhealthy.appointment_service.model.ProviderSchedule;
-
 import com.quhealthy.appointment_service.model.enums.AppointmentStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -21,7 +18,6 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
     /**
      * 📅 VALIDACIÓN DE TRASLAPE (Double Booking Check)
      * Verifica si existe alguna cita que NO esté cancelada y cuyo horario choque con el solicitado.
-     * Lógica: (StartA < EndB) AND (EndA > StartB)
      */
     @Query("""
         SELECT COUNT(a) > 0 FROM Appointment a 
@@ -47,29 +43,33 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
 
     /**
      * 📋 HISTORIAL DE PACIENTE
-     * Paginado para no saturar la app móvil.
      */
     Page<Appointment> findByConsumerIdOrderByStartTimeDesc(Long consumerId, Pageable pageable);
 
     /**
-     * 📋 HISTORIAL DE PROVEEDOR (Gestión)
-     * Permite filtrar por estado (ej: "Ver solo pendientes de hoy").
+     * 📋 HISTORIAL DE PROVEEDOR (Gestión por Estado)
      */
     Page<Appointment> findByProviderIdAndStatus(Long providerId, AppointmentStatus status, Pageable pageable);
     
-    // Versión sin filtro de estado (Todas)
+    /**
+     * 📋 HISTORIAL DE PROVEEDOR (Todas)
+     */
     Page<Appointment> findByProviderIdOrderByStartTimeDesc(Long providerId, Pageable pageable);
 
-
-public interface ProviderScheduleRepository extends JpaRepository<ProviderSchedule, Long> {
-    List<ProviderSchedule> findByProviderId(Long providerId);
-    void deleteByProviderId(Long providerId); // Para el update "borrar y reemplazar"
-}
-
-public interface TimeBlockRepository extends JpaRepository<TimeBlock, Long> {
-    // Buscar bloqueos que se solapen con un rango
-    @Query("SELECT b FROM TimeBlock b WHERE b.providerId = :providerId AND " +
-           "b.startDateTime < :end AND b.endDateTime > :start")
-    List<TimeBlock> findOverlappingBlocks(Long providerId, LocalDateTime start, LocalDateTime end);
-}
+    /**
+     * ✅ EL MÉTODO QUE FALTABA (Vital para CalendarService)
+     * Busca citas confirmadas que ocupen espacio en el calendario.
+     * Excluye las canceladas.
+     */
+    @Query("""
+        SELECT a FROM Appointment a 
+        WHERE a.providerId = :providerId 
+        AND a.status NOT IN ('CANCELED_BY_PATIENT', 'CANCELED_BY_PROVIDER', 'NO_SHOW')
+        AND (a.startTime < :end AND a.endTime > :start)
+    """)
+    List<Appointment> findConfirmedBetween(
+            @Param("providerId") Long providerId, 
+            @Param("start") LocalDateTime start, 
+            @Param("end") LocalDateTime end
+    );
 }
