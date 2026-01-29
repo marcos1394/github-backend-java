@@ -20,8 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 👇 AQUI ESTÁN TODOS TUS SERVICIOS (INCLUYENDO CATALOG Y APPOINTMENT)
-        service: [auth_service, onboarding_service, social_service, payment_service, review_service, catalog_service, appointment_service]
+        # 👇 AQUI ESTÁN TODOS TUS SERVICIOS (AHORA INCLUYE NOTIFICATION)
+        service: [auth_service, onboarding_service, social_service, payment_service, review_service, catalog_service, appointment_service, notification_service]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -149,15 +149,30 @@ jobs:
               DB_PASSWORD=application_db_password:latest
               JWT_SECRET=application_jwt_secret:latest
 
-          # --- CONFIGURACIÓN APPOINTMENT SERVICE (NUEVO 📅) ---
+          # --- CONFIGURACIÓN APPOINTMENT SERVICE 📅 ---
           - service-name: appointment-service
             directory: appointment_service
-            # Secretos: DB y JWT (Feign Clients usan URLs, no secrets. Pub/Sub usa identidad)
+            # Secretos: DB y JWT
             secrets-list: |
               DB_URL=application_db_url:latest
               DB_USER=application_db_user:latest
               DB_PASSWORD=application_db_password:latest
               JWT_SECRET=application_jwt_secret:latest
+
+          # --- CONFIGURACIÓN NOTIFICATION SERVICE (NUEVO 🔔) ---
+          - service-name: notification-service
+            directory: notification_service
+            # Secretos: DB, JWT y CANALES (Resend + Twilio)
+            secrets-list: |
+              DB_URL=application_db_url:latest
+              DB_USER=application_db_user:latest
+              DB_PASSWORD=application_db_password:latest
+              JWT_SECRET=application_jwt_secret:latest
+              RESEND_API_KEY=application_resend_key:latest
+              RESEND_FROM_EMAIL=RESEND_FROM_EMAIL:latest
+              TWILIO_SID=application_twilio_sid:latest
+              TWILIO_TOKEN=application_twilio_token:latest
+              TWILIO_PHONE_NUMBER=application_twilio_phone:latest
 
     steps:
       - uses: actions/checkout@v4
