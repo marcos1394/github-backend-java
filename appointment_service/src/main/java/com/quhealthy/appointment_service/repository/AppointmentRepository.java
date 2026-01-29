@@ -1,6 +1,9 @@
 package com.quhealthy.appointment_service.repository;
 
 import com.quhealthy.appointment_service.model.Appointment;
+import com.quhealthy.appointment_service.model.TimeBlock;
+import com.quhealthy.appointment_service.model.ProviderSchedule;
+
 import com.quhealthy.appointment_service.model.enums.AppointmentStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -56,4 +59,17 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
     
     // Versión sin filtro de estado (Todas)
     Page<Appointment> findByProviderIdOrderByStartTimeDesc(Long providerId, Pageable pageable);
+
+
+public interface ProviderScheduleRepository extends JpaRepository<ProviderSchedule, Long> {
+    List<ProviderSchedule> findByProviderId(Long providerId);
+    void deleteByProviderId(Long providerId); // Para el update "borrar y reemplazar"
+}
+
+public interface TimeBlockRepository extends JpaRepository<TimeBlock, Long> {
+    // Buscar bloqueos que se solapen con un rango
+    @Query("SELECT b FROM TimeBlock b WHERE b.providerId = :providerId AND " +
+           "b.startDateTime < :end AND b.endDateTime > :start")
+    List<TimeBlock> findOverlappingBlocks(Long providerId, LocalDateTime start, LocalDateTime end);
+}
 }
