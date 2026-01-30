@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
 import java.time.LocalDateTime;
 
 @Data
@@ -12,9 +13,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Entity
-@Table(name = "time_blocks", indexes = {
-    @Index(name = "idx_block_provider_date", columnList = "provider_id, start_date_time")
-})
+@Table(name = "time_blocks")
 public class TimeBlock {
 
     @Id
@@ -25,15 +24,20 @@ public class TimeBlock {
     private Long providerId;
 
     @Column(nullable = false)
-    private String reason; // "Vacaciones", "Comida", "Personal"
-
-    @Column(name = "start_date_time", nullable = false)
     private LocalDateTime startDateTime;
 
-    @Column(name = "end_date_time", nullable = false)
+    @Column(nullable = false)
     private LocalDateTime endDateTime;
-// Agrega este campo a tu entidad existente
-@Column(name = "external_id", unique = true)
-private String externalId; // El ID del evento de Google (ej: "abc12345...")
 
+    private String reason; // Ej: "Almuerzo", "Google Calendar: Cena"
+
+    // ✅ CAMPO NUEVO 1: ID externo para sincronización (Google/Outlook)
+    @Column(name = "external_id", unique = true)
+    private String externalId;
+
+    // ✅ CAMPO NUEVO 2: Para distinguir si fue creado manualmente o por sync
+    // Usamos @Builder.Default para que por defecto sea true (manual)
+    @Builder.Default
+    @Column(name = "is_manual")
+    private boolean isManual = true; 
 }
