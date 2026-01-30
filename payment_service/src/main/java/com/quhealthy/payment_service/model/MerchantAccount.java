@@ -15,47 +15,31 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Entity
-@Table(name = "merchant_accounts", indexes = {
-    // 🚀 INDEX: Vital para buscar rápido "Dáme la cuenta Stripe del Doctor ID 500"
-    @Index(name = "idx_merchant_user", columnList = "user_id") 
-})
+@Table(name = "merchant_accounts")
 public class MerchantAccount {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // Vinculación lógica con el Auth Service (Provider.java)
-    // Usamos Long porque es el estándar que infiero de tus modelos
     @Column(name = "user_id", nullable = false, unique = true)
-    private Long userId; 
+    private Long userId;
 
-    // El ID de la cuenta conectada en Stripe (ej: "acct_1MeDj2...")
     @Column(name = "stripe_account_id", nullable = false, unique = true)
     private String stripeAccountId;
 
-    // --- Estados de Compliance (Stripe KYC) ---
-    
-    // ¿El usuario completó el formulario de Stripe?
-    @Column(name = "details_submitted")
-    private boolean detailsSubmitted = false;
+    // ✅ AGREGAMOS ESTE CAMPO QUE FALTABA
+    @Column(name = "onboarding_completed")
+    private boolean onboardingCompleted = false;
 
-    // ¿Stripe ya nos deja procesar tarjetas para este doctor?
+    @Column(name = "payouts_enabled")
+    private boolean payoutsEnabled = false;
+
     @Column(name = "charges_enabled")
     private boolean chargesEnabled = false;
 
-    // ¿Stripe ya nos deja enviarle el dinero a su cuenta bancaria?
-    @Column(name = "payouts_enabled")
-    private boolean payoutsEnabled = false;
-    
-    // Configuración Regional
     @Column(name = "country", length = 2)
-    private String country; // "MX"
-    
-    @Column(name = "default_currency", length = 3)
-    private String defaultCurrency; // "mxn"
-
-    // --- Auditoría ---
+    private String country;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

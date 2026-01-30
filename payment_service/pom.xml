@@ -23,6 +23,7 @@
         <spring-cloud-gcp.version>6.0.0</spring-cloud-gcp.version>
         
         <stripe.version>24.12.0</stripe.version>
+        <mercadopago.version>2.8.0</mercadopago.version>
     </properties>
 
     <dependencies>
@@ -64,12 +65,12 @@
             <artifactId>stripe-java</artifactId>
             <version>${stripe.version}</version>
         </dependency>
-        <dependency>
-    <groupId>com.mercadopago</groupId>
-    <artifactId>sdk-java</artifactId>
-    <version>2.8.0</version>
-</dependency>
 
+        <dependency>
+            <groupId>com.mercadopago</groupId>
+            <artifactId>sdk-java</artifactId>
+            <version>${mercadopago.version}</version>
+        </dependency>
 
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -151,6 +152,21 @@
                             <artifactId>lombok</artifactId>
                         </exclude>
                     </excludes>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            </path>
+                    </annotationProcessorPaths>
                 </configuration>
             </plugin>
         </plugins>
