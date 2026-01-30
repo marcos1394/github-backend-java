@@ -29,7 +29,7 @@ public class StripeIdentityService {
     private final MerchantAccountRepository merchantRepository;
     private final PaymentCustomerRepository customerRepository;
 
-    @Value("${stripe.api.key}")
+    @Value("${stripe.api-key}")
     private String stripeApiKey;
 
     @Value("${application.frontend.url}")
