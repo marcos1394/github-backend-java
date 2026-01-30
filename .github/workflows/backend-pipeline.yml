@@ -148,6 +148,8 @@ jobs:
               DB_USER=application_db_user:latest
               DB_PASSWORD=application_db_password:latest
               JWT_SECRET=application_jwt_secret:latest
+              GOOGLE_MAPS_API_KEY=application_google_maps_key:latest
+
 
           # --- CONFIGURACIÓN APPOINTMENT SERVICE 📅 ---
           - service-name: appointment-service
