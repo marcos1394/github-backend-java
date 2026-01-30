@@ -39,6 +39,7 @@ public class PdfGeneratorService {
      * 📄 Genera Comprobante de Pago de Plan (SaaS)
      */
     public byte[] generateInvoicePdf(PdfInvoiceDto data) {
+        // Se agrega IOException al catch para cumplir con el contrato de try-with-resources
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4, 50, 50, 50, 50);
             PdfWriter writer = PdfWriter.getInstance(document, out);
@@ -115,9 +116,9 @@ public class PdfGeneratorService {
             document.close();
             return out.toByteArray();
 
-        } catch (DocumentException e) {
+        } catch (DocumentException | IOException e) { // <--- CORRECCIÓN AQUÍ: Capturamos IOException
             log.error("Error generando PDF Invoice", e);
-            throw new RuntimeException("Error generando PDF", e);
+            throw new RuntimeException("Error generando PDF Invoice", e);
         }
     }
 
@@ -125,6 +126,7 @@ public class PdfGeneratorService {
      * 🩺 Genera Recibo de Cita Médica (Para Paciente)
      */
     public byte[] generateAppointmentReceiptPdf(PdfAppointmentReceiptDto data) {
+        // Se agrega IOException al catch para cumplir con el contrato de try-with-resources
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4, 50, 50, 50, 50);
             PdfWriter writer = PdfWriter.getInstance(document, out);
@@ -184,7 +186,8 @@ public class PdfGeneratorService {
 
             document.close();
             return out.toByteArray();
-        } catch (DocumentException e) {
+        } catch (DocumentException | IOException e) { // <--- CORRECCIÓN AQUÍ: Capturamos IOException
+            log.error("Error generando PDF Cita", e);
             throw new RuntimeException("Error generando PDF Cita", e);
         }
     }
@@ -227,7 +230,7 @@ public class PdfGeneratorService {
         @Override
         public void onEndPage(PdfWriter writer, Document document) {
             ColumnText.showTextAligned(writer.getDirectContent(), Element.ALIGN_CENTER, 
-                new Phrase("www.quhealthy.com", FONT_SMALL), 
+                new Phrase("www.quhealthy.org", FONT_SMALL), 
                 (document.right() - document.left()) / 2 + document.leftMargin(), 
                 document.bottom() - 10, 0);
         }
