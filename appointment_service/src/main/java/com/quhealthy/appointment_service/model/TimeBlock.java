@@ -32,4 +32,8 @@ public class TimeBlock {
 
     @Column(name = "end_date_time", nullable = false)
     private LocalDateTime endDateTime;
+// Agrega este campo a tu entidad existente
+@Column(name = "external_id", unique = true)
+private String externalId; // El ID del evento de Google (ej: "abc12345...")
+
 }

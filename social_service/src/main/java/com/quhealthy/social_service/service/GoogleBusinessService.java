@@ -94,7 +94,7 @@ public class GoogleBusinessService {
         connection.setPlatformUserId(locationId);
         connection.setPlatformUserName(locationName); // 👈 Obligatorio en tu modelo
         connection.setAccessToken(accessToken);
-        connection.setIsActive(true); // Reactivamos si estaba en soft delete
+        connection.setActive(true); // Reactivamos si estaba en soft delete
         
         if (refreshToken != null) {
             connection.setRefreshToken(refreshToken);
