@@ -12,19 +12,32 @@ import java.util.Map;
 
 @Slf4j
 @RestController
-@RequestMapping("/api/payments/portal")
+@RequestMapping("/api/payments") // 1. Usamos la ruta base general
 @RequiredArgsConstructor
 public class PaymentSettingsController {
 
     private final StripeCheckoutService checkoutService;
 
-    @Value("${application.frontend.url}")
+    // 2. Blindaje: Agregamos un valor por defecto para evitar que falle si falta la variable
+    @Value("${application.frontend.url:https://quhealthy.org}")
     private String frontendUrl;
 
-    @PostMapping
+    /**
+     * Endpoint para generar la sesión del Portal de Facturación del Cliente.
+     * * ⚠️ CORRECCIÓN DE RUTA:
+     * Cambiamos de "/portal" a "/billing-portal" para solucionar el error:
+     * "Ambiguous mapping" con PaymentController.
+     */
+    @PostMapping("/billing-portal")
     public ResponseEntity<Map<String, String>> createPortalSession(@AuthenticationPrincipal Long userId) {
-        // ✅ CORRECCIÓN: Pasamos userId (Long) directamente.
-        String url = checkoutService.createCustomerPortalSession(userId, frontendUrl + "/profile/settings");
+        log.info("Generando sesión de portal de facturación para usuario ID: {}", userId);
+
+        // Construimos la URL de retorno
+        String returnUrl = frontendUrl + "/profile/settings";
+        
+        // Llamamos al servicio
+        String url = checkoutService.createCustomerPortalSession(userId, returnUrl);
+        
         return ResponseEntity.ok(Map.of("url", url));
     }
 }
