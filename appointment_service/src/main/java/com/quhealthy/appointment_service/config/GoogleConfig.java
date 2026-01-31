@@ -1,5 +1,6 @@
 package com.quhealthy.appointment_service.config;
 
+import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.JsonFactory;
 import com.google.api.client.json.gson.GsonFactory;
@@ -18,12 +19,12 @@ public class GoogleConfig {
      */
     @Bean
     public NetHttpTransport netHttpTransport() throws GeneralSecurityException, IOException {
-        return com.google.api.client.googleapis.javanet.GoogleNetHttpTransport.newTrustedTransport();
+        return GoogleNetHttpTransport.newTrustedTransport();
     }
 
     /**
      * Provee la fábrica de JSON.
-     * Usamos GSON que es la recomendada actualmente por Google (JacksonFactory está obsoleta en algunas versiones).
+     * Usamos GSON que es la recomendada actualmente por Google.
      */
     @Bean
     public JsonFactory jsonFactory() {

@@ -24,7 +24,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 
 @Slf4j
 @Service
@@ -32,7 +31,7 @@ public class GoogleCalendarService {
 
     private final NetHttpTransport httpTransport;
     private final JsonFactory jsonFactory;
-    private final CalendarIntegrationRepository integrationRepository; // ✅ Usamos tu repositorio
+    private final CalendarIntegrationRepository integrationRepository;
 
     private final String clientId;
     private final String clientSecret;
@@ -63,6 +62,12 @@ public class GoogleCalendarService {
 
     private void initFlow() {
         try {
+            // Validación preventiva para evitar NullPointerExceptions
+            if (clientId == null || clientSecret == null || clientId.isBlank() || clientSecret.isBlank()) {
+                log.error("⚠️ CLAVES FALTANTES: Google Calendar Client ID o Secret no están configurados.");
+                return;
+            }
+
             GoogleClientSecrets.Details details = new GoogleClientSecrets.Details();
             details.setClientId(clientId);
             details.setClientSecret(clientSecret);
@@ -79,13 +84,18 @@ public class GoogleCalendarService {
                     .setApprovalPrompt("force")
                     .build();
 
-            log.info("✅ Google Authorization Flow inicializado.");
-        } catch (Exception e) {
-            log.error("❌ Error fatal inicializando Google Calendar Service: {}", e.getMessage());
+            log.info("✅ Google Authorization Flow inicializado correctamente.");
+            
+        } catch (Throwable e) { 
+            // 🛡️ BLINDAJE CRÍTICO: Capturamos Throwable para atrapar errores de librerías (LinkageError)
+            // Esto permite que Spring arranque aunque el calendario falle internamente.
+            log.error("❌ ERROR FATAL al iniciar servicio de Calendario (La app continuará sin esta función): ", e);
         }
     }
 
     public String getAuthorizationUrl(Long providerId) {
+        if (flow == null) throw new IllegalStateException("El servicio de Google Calendar no se pudo iniciar. Revisa los logs.");
+        
         return flow.newAuthorizationUrl()
                 .setRedirectUri(redirectUri)
                 .setState(String.valueOf(providerId))
@@ -94,25 +104,29 @@ public class GoogleCalendarService {
 
     @Transactional
     public void exchangeCodeForTokens(String code, Long providerId) throws IOException {
+        if (flow == null) throw new IllegalStateException("Servicio de calendario no disponible.");
+
         GoogleTokenResponse response = flow.newTokenRequest(code)
                 .setRedirectUri(redirectUri)
                 .execute();
 
-        // 1. Buscamos si ya existe integración para actualizarla, o creamos una nueva
+        // 1. Buscamos si ya existe integración o creamos una nueva
         CalendarIntegration integration = integrationRepository.findByProviderId(providerId)
                 .orElse(CalendarIntegration.builder().providerId(providerId).build());
 
         // 2. Actualizamos los datos
         integration.setAccessToken(response.getAccessToken());
         
-        // El refresh token solo viene la primera vez (o con approval_prompt=force)
+        // El refresh token solo viene la primera vez
         if (response.getRefreshToken() != null) {
             integration.setRefreshToken(response.getRefreshToken());
         }
         
-        // Calculamos expiración (Ahora + segundos de vida * 1000)
-        long expiresInMillis = response.getExpiresInSeconds() * 1000;
-        integration.setTokenExpiresAt(System.currentTimeMillis() + expiresInMillis);
+        // Calculamos expiración
+        if (response.getExpiresInSeconds() != null) {
+            long expiresInMillis = response.getExpiresInSeconds() * 1000;
+            integration.setTokenExpiresAt(System.currentTimeMillis() + expiresInMillis);
+        }
 
         integrationRepository.save(integration);
         log.info("💾 Integración guardada exitosamente para Provider ID: {}", providerId);
@@ -120,7 +134,9 @@ public class GoogleCalendarService {
 
     @Transactional
     public List<Event> syncCalendar(Long providerId) throws IOException {
-        // 1. Obtener integración de TU repositorio
+        if (flow == null) throw new IllegalStateException("Servicio de calendario no disponible.");
+
+        // 1. Obtener integración
         CalendarIntegration integration = integrationRepository.findByProviderId(providerId)
                 .orElseThrow(() -> new IllegalArgumentException("El proveedor no ha conectado su calendario."));
 
@@ -135,7 +151,7 @@ public class GoogleCalendarService {
         credential.setAccessToken(integration.getAccessToken());
         credential.setRefreshToken(integration.getRefreshToken());
         
-        // Seteamos expiración para que la librería sepa si debe renovar
+        // Seteamos expiración
         Long expiresAt = integration.getTokenExpiresAt();
         if (expiresAt != null) {
             long expiresInSeconds = (expiresAt - System.currentTimeMillis()) / 1000;
@@ -153,9 +169,9 @@ public class GoogleCalendarService {
         DateTime now = new DateTime(System.currentTimeMillis());
         DateTime oneWeekLater = new DateTime(System.currentTimeMillis() + (7 * 24 * 60 * 60 * 1000)); // 7 días
 
-        log.info("🔄 Sincronizando calendario: {}", integration.getCalendarId());
+        log.info("🔄 Sincronizando calendario ID: {}", integration.getCalendarId());
         
-        Events events = service.events().list(integration.getCalendarId()) // Usamos el ID guardado (default 'primary')
+        Events events = service.events().list(integration.getCalendarId())
                 .setTimeMin(now)
                 .setTimeMax(oneWeekLater)
                 .setOrderBy("startTime")
