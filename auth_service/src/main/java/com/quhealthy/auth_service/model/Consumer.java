@@ -17,7 +17,14 @@ import java.util.List;
 @EqualsAndHashCode(callSuper = true)
 @Entity
 @Table(name = "consumers")
-public class Consumer extends BaseUser implements UserDetails { // 👈 IMPLEMENTS ADDED
+public class Consumer extends BaseUser implements UserDetails {
+
+    // ✅ AGREGAMOS ESTOS DOS CAMPOS
+    @Column(name = "first_name", nullable = false)
+    private String firstName;
+
+    @Column(name = "last_name", nullable = false)
+    private String lastName;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -32,7 +39,7 @@ public class Consumer extends BaseUser implements UserDetails { // 👈 IMPLEMEN
     @Column(name = "preferred_language")
     private String preferredLanguage = "es";
 
-    // --- Notificaciones ---
+    // ... (El resto de tus campos de notificaciones y reset siguen igual) ...
     @Column(name = "email_notifications_enabled")
     private boolean emailNotificationsEnabled = true;
 
@@ -51,10 +58,7 @@ public class Consumer extends BaseUser implements UserDetails { // 👈 IMPLEMEN
     @Column(name = "reset_token_expires_at")
     private LocalDateTime resetTokenExpiresAt;
 
-    // =================================================================
-    // 👮 IMPLEMENTACIÓN DE USER DETAILS (Igual que Provider)
-    // =================================================================
-
+    // ... (Implementación UserDetails sigue igual) ...
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return List.of(new SimpleGrantedAuthority(role.name()));
@@ -67,15 +71,10 @@ public class Consumer extends BaseUser implements UserDetails { // 👈 IMPLEMEN
 
     @Override
     public boolean isAccountNonExpired() { return true; }
-
     @Override
     public boolean isAccountNonLocked() { return true; }
-
     @Override
     public boolean isCredentialsNonExpired() { return true; }
-
     @Override
     public boolean isEnabled() { return true; }
-
-
 }
