@@ -84,8 +84,8 @@ public class SecurityConfig {
         // Orígenes permitidos (Frontend Local, Producción)
         configuration.setAllowedOrigins(List.of(
             "http://localhost:3000",       // Desarrollo Local
-            "https://quhealthy.com",       // Producción
-            "https://www.quhealthy.com"    // Producción con www
+            "https://quhealthy.org",       // Producción
+            "https://www.quhealthy.org"    // Producción con www
         ));
         
         // Métodos HTTP permitidos
