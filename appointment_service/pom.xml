@@ -21,6 +21,8 @@
         <spring-cloud.version>2025.1.0</spring-cloud.version>
         <spring-cloud-gcp.version>7.4.3</spring-cloud-gcp.version>
         <google-cloud-bom.version>26.34.0</google-cloud-bom.version>
+        
+        <google-calendar.version>v3-rev20251207-2.0.0</google-calendar.version>
     </properties>
 
     <dependencies>
@@ -30,15 +32,15 @@
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
         <dependency>
@@ -82,38 +84,7 @@
         <dependency>
             <groupId>com.google.apis</groupId>
             <artifactId>google-api-services-calendar</artifactId>
-            <version>v3-rev20220715-2.0.0</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>com.google.api-client</groupId>
-                    <artifactId>google-api-client</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>com.google.oauth-client</groupId>
-                    <artifactId>google-oauth-client</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>com.google.http-client</groupId>
-                    <artifactId>google-http-client</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>com.google.auth</groupId>
-                    <artifactId>google-auth-library-oauth2-http</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        
-        <dependency>
-            <groupId>com.google.api-client</groupId>
-            <artifactId>google-api-client</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.google.oauth-client</groupId>
-            <artifactId>google-oauth-client</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.google.http-client</groupId>
-            <artifactId>google-http-client-gson</artifactId>
+            <version>${google-calendar.version}</version>
         </dependency>
 
         <dependency>
@@ -129,7 +100,7 @@
             <groupId>com.fasterxml.jackson.datatype</groupId>
             <artifactId>jackson-datatype-jsr310</artifactId>
         </dependency>
-
+        
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -151,7 +122,6 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            
             <dependency>
                 <groupId>com.google.cloud</groupId>
                 <artifactId>spring-cloud-gcp-dependencies</artifactId>
@@ -159,7 +129,6 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            
             <dependency>
                 <groupId>com.google.cloud</groupId>
                 <artifactId>libraries-bom</artifactId>
