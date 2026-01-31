@@ -1,8 +1,8 @@
 package com.quhealthy.appointment_service.controller;
 
 import com.quhealthy.appointment_service.service.GoogleCalendarService;
-import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -10,32 +10,59 @@ import org.springframework.web.bind.annotation.*;
 import java.io.IOException;
 import java.util.Map;
 
+@Slf4j
 @RestController
-@RequestMapping("/api/appointments/google")
+@RequestMapping("/api/appointments/calendar")
 @RequiredArgsConstructor
 public class CalendarSyncController {
 
     private final GoogleCalendarService calendarService;
 
-    @GetMapping("/connect")
-    public ResponseEntity<?> connect(@AuthenticationPrincipal Long providerId) {
-        String url = calendarService.generateAuthUrl(providerId);
+    /**
+     * Paso 1: Iniciar el proceso de conexión.
+     * Retorna la URL de Google para que el doctor se loguee.
+     */
+    @PostMapping("/connect")
+    public ResponseEntity<Map<String, String>> connectCalendar(@AuthenticationPrincipal Long providerId) {
+        log.info("Iniciando conexión de Google Calendar para provider: {}", providerId);
+        // ✅ CORREGIDO: Usamos el nombre correcto del método del servicio
+        String url = calendarService.getAuthorizationUrl(providerId);
         return ResponseEntity.ok(Map.of("url", url));
     }
 
+    /**
+     * Paso 2: Google nos devuelve el control aquí (Callback).
+     * Intercambiamos el código por tokens.
+     */
     @GetMapping("/callback")
-    public void callback(@RequestParam String code, @RequestParam String state, HttpServletResponse response) throws IOException {
+    public ResponseEntity<String> handleCallback(
+            @RequestParam("code") String code,
+            @RequestParam("state") String state) {
+        
+        log.info("Recibido callback de Google. State (ProviderId): {}", state);
         try {
-            calendarService.handleCallback(code, state);
-            response.sendRedirect("https://quhealthy.com/profile/calendar?status=success");
-        } catch (Exception e) {
-            response.sendRedirect("https://quhealthy.com/profile/calendar?status=error");
+            Long providerId = Long.valueOf(state);
+            // ✅ CORREGIDO: Usamos el nombre correcto del método del servicio
+            calendarService.exchangeCodeForTokens(code, providerId);
+            return ResponseEntity.ok("Google Calendar conectado exitosamente. Puedes cerrar esta ventana.");
+        } catch (IOException e) {
+            log.error("Error en callback de Google", e);
+            return ResponseEntity.status(500).body("Error conectando con Google Calendar.");
         }
     }
-    
+
+    /**
+     * Paso 3 (Opcional): Forzar una sincronización manual.
+     */
     @PostMapping("/sync")
-    public ResponseEntity<?> forceSync(@AuthenticationPrincipal Long providerId) throws IOException {
-        calendarService.syncCalendar(providerId);
-        return ResponseEntity.ok(Map.of("message", "Sincronización iniciada"));
+    public ResponseEntity<Void> manualSync(@AuthenticationPrincipal Long providerId) {
+        log.info("Solicitud de sincronización manual para provider: {}", providerId);
+        try {
+            // ✅ CORREGIDO: Ahora este método existirá en el servicio
+            calendarService.syncCalendar(providerId);
+            return ResponseEntity.ok().build();
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
     }
 }
