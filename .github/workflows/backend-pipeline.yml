@@ -160,6 +160,9 @@ jobs:
               DB_USER=application_db_user:latest
               DB_PASSWORD=application_db_password:latest
               JWT_SECRET=application_jwt_secret:latest
+              GOOGLE_CALENDAR_CLIENT_ID=google_calendar_client_id:latest
+              GOOGLE_CALENDAR_CLIENT_SECRET=google_calendar_client_secret:latest
+              GOOGLE_CALENDAR_REDIRECT_URL=google_calendar_redirect_url:latest
 
           # --- CONFIGURACIÓN NOTIFICATION SERVICE (NUEVO 🔔) ---
           - service-name: notification-service
