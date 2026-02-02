@@ -1,187 +1,250 @@
 package com.quhealthy.auth_service.model;
 
 import com.quhealthy.auth_service.model.enums.Archetype;
-import com.quhealthy.auth_service.model.enums.PlanStatus;
+import com.quhealthy.auth_service.model.enums.Gender;
+import com.quhealthy.auth_service.model.enums.LegalEntityType;
 import com.quhealthy.auth_service.model.enums.Role;
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.NoArgsConstructor;
 import lombok.ToString;
-import org.locationtech.jts.geom.Point; // Requiere hibernate-spatial
-
-// --- Imports de Spring Security (NUEVOS) ---
+import lombok.experimental.SuperBuilder;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
-import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * Entidad Provider - Profesionales de salud y belleza.
+ *
+ * RESPONSABILIDADES:
+ * - Identidad profesional y categorización.
+ * - Datos de ubicación y estado de onboarding.
+ * - Relaciones JPA con catálogos (Categorías/Tags).
+ *
+ * FLUJO DE DATOS:
+ * 1. Registro: Se llena businessName, email, password y parentCategoryId.
+ * 2. Onboarding: Se llena category, subCategory, address, bio, etc.
+ */
 @Data
+@SuperBuilder
+@NoArgsConstructor
+@AllArgsConstructor
+// CORRECCIÓN 1: Usamos solo callSuper, las exclusiones van en los campos
 @EqualsAndHashCode(callSuper = true)
 @Entity
-@Table(name = "providers")
-// ✅ CAMBIO CRÍTICO: Implementar UserDetails
+@Table(name = "providers", indexes = {
+        @Index(name = "idx_providers_email", columnList = "email"),
+        @Index(name = "idx_providers_parent_category_id", columnList = "parent_category_id"),
+        @Index(name = "idx_providers_category_id", columnList = "category_id"), // Index FK
+        @Index(name = "idx_providers_status", columnList = "status"),
+        @Index(name = "idx_providers_slug", columnList = "slug"),
+        @Index(name = "idx_providers_onboarding_complete", columnList = "onboarding_complete")
+})
 public class Provider extends BaseUser implements UserDetails {
 
+    // ========================================================================
+    // 👤 ROL
+    // ========================================================================
+
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(name = "role", nullable = false, length = 20)
+    @Builder.Default
     private Role role = Role.PROVIDER;
 
-    @Column(name = "accept_terms", nullable = false)
-    private boolean acceptTerms;
+    // ========================================================================
+    // 🏢 IDENTIDAD PROFESIONAL / NEGOCIO
+    // ========================================================================
 
-    // --- Datos de Negocio ---
-    @Column(name = "business_name")
+    @Column(name = "business_name", nullable = false, length = 200)
     private String businessName;
 
+    /**
+     * Slug único para URL amigable.
+     * Ej: "clinica-dental-sonrisas"
+     * Se genera durante el onboarding o tras verificar el nombre.
+     */
+    @Column(name = "slug", unique = true)
+    private String slug;
+
+    @Column(name = "profile_image_url", columnDefinition = "TEXT")
+    private String profileImageUrl;
+
+    @Column(name = "bio", columnDefinition = "TEXT", length = 1000)
+    private String bio;
+
+    // ========================================================================
+    // 📋 TIPO DE ENTIDAD LEGAL
+    // ========================================================================
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "legal_entity_type", nullable = false, length = 20)
+    @Builder.Default
+    private LegalEntityType legalEntityType = LegalEntityType.PERSONA_FISICA;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "gender", length = 20)
+    private Gender gender;
+
+    // ========================================================================
+    // 📍 UBICACIÓN
+    // ========================================================================
+
+    @Column(name = "address", length = 400)
     private String address;
 
-    // Coordenadas simples
-    private Double lat;
-    private Double lng;
+    @Column(name = "latitude", precision = 10)
+    private Double latitude;
 
-    // Coordenadas Espaciales (PostGIS)
-    @Column(columnDefinition = "geography(Point,4326)")
-    private Point location;
+    @Column(name = "longitude", precision = 11)
+    private Double longitude;
 
-    // --- Categorización ---
+
+
+    // ========================================================================
+    // 🏷️ CATEGORIZACIÓN (JPA RELATIONS)
+    // ========================================================================
+
+    /**
+     * ID de la industria (Salud vs Belleza).
+     * Se captura en el REGISTRO.
+     * Es un Long simple porque es el punto de partida del Wizard.
+     */
     @Column(name = "parent_category_id", nullable = false)
     private Long parentCategoryId;
 
-    @Column(name = "category_provider_id")
-    private Long categoryProviderId;
+    /**
+     * Categoría Específica (Dentista, Cardiólogo).
+     * Se captura en el ONBOARDING.
+     * Nullable = true (porque no existe al momento del registro).
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id", nullable = true)
+    @ToString.Exclude
+    // CORRECCIÓN 2: Exclusión explícita para evitar ciclos
+    @EqualsAndHashCode.Exclude
+    private CategoryProvider category;
 
-    @Column(name = "sub_category_id")
-    private Long subCategoryId;
+    /**
+     * Subcategoría (Ortodoncia).
+     * Se captura en el ONBOARDING.
+     * Nullable = true.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "sub_category_id", nullable = true)
+    @ToString.Exclude
+    // CORRECCIÓN 3: Exclusión explícita para evitar ciclos
+    @EqualsAndHashCode.Exclude
+    private SubCategory subCategory;
 
-    // --- Estado y Onboarding ---
     @Enumerated(EnumType.STRING)
+    @Column(name = "archetype", length = 50)
     private Archetype archetype;
 
-    // ✅ CAMBIO: Renombrado a isKycVerified (CamelCase estándar) para que Lombok genere isKycVerified()
-    @Column(name = "is_kyc_verified")
-    private boolean isKycVerified = false;
+    // ========================================================================
+    // 🚀 ESTADO Y LEGAL
+    // ========================================================================
 
-    @Column(name = "is_license_verified")
-    private boolean isLicenseVerified = false;
+    @Builder.Default
+    @Column(name = "onboarding_complete", nullable = false)
+    private Boolean onboardingComplete = false;
 
-    @Column(name = "is_marketplace_configured")
-    private boolean isMarketplaceConfigured = false;
+    // NOTA: Se eliminó 'isEmailVerified' porque ya se hereda de BaseUser.
+    // Redefinirlo aquí causa errores de "Repeated column" en Hibernate.
 
-    @Column(name = "onboarding_complete")
-    private boolean onboardingComplete = false;
+    /**
+     * Paso actual del wizard.
+     * Ej: "SPECIALTY_SELECTION", "DOCUMENTS_UPLOAD".
+     */
+    @Column(name = "current_onboarding_step")
+    private String currentOnboardingStep;
 
-    // --- Plan & Suscripción ---
-    @Enumerated(EnumType.STRING)
-    @Column(name = "plan_status", nullable = false)
-    private PlanStatus planStatus = PlanStatus.TRIAL;
+    /**
+     * Aceptación de Términos y Condiciones.
+     * Requerido legalmente desde el registro.
+     */
+    @Column(name = "terms_accepted", nullable = false)
+    private boolean termsAccepted;
 
-    @Column(name = "trial_expires_at")
-    private LocalDateTime trialExpiresAt;
+    @Builder.Default
+    @Column(name = "has_active_plan", nullable = false)
+    private boolean hasActivePlan = false;
 
-    // --- Integraciones ---
-    @Column(name = "stripe_account_id", unique = true)
-    private String stripeAccountId;
+    // ========================================================================
+    // 💳 REFERENCIA A PLAN
+    // ========================================================================
 
-    @Column(name = "google_access_token", columnDefinition = "TEXT")
-    private String googleAccessToken;
+    @Column(name = "current_plan_id")
+    private Long currentPlanId;
 
-    @Column(name = "google_refresh_token", columnDefinition = "TEXT")
-    private String googleRefreshToken;
+    // ========================================================================
+    // 🏷️ ETIQUETAS
+    // ========================================================================
 
-    @Column(name = "google_token_expiry")
-    private LocalDateTime googleTokenExpiry;
-
-    @Column(name = "google_calendar_id")
-    private String googleCalendarId;
-
-    // =================================================================
-    // 🔐 RECUPERACIÓN DE CONTRASEÑA (Selector/Verifier Pattern)
-    // =================================================================
-    
-    @Column(name = "reset_selector")
-    private String resetSelector;
-
-    @Column(name = "reset_verifier_hash")
-    private String resetVerifierHash;
-
-    @Column(name = "reset_token_expires_at")
-    private LocalDateTime resetTokenExpiresAt;
-
-    // --- Sistema de Referidos ---
-    @Column(name = "referral_code", unique = true)
-    private String referralCode;
-
-    @Column(name = "referred_by_id")
-    private Integer referredById;
-
-    // =================================================================
-    // 🛡️ 2FA (Agregado para completitud Enterprise)
-    // =================================================================
-    
-    @Column(name = "is_two_factor_enabled")
-    private Boolean isTwoFactorEnabled = false;
-
-    @Column(name = "two_factor_secret", columnDefinition = "TEXT")
-    private String twoFactorSecret; 
-
-    // --- RELACIONES ---
-
-    @OneToMany(mappedBy = "provider", fetch = FetchType.LAZY)
-    private List<ProviderPlan> plans;
-
-    @ManyToMany(cascade = {CascadeType.PERSIST, CascadeType.MERGE})
-    @JoinTable(
-        name = "provider_tags",
-        joinColumns = @JoinColumn(name = "provider_id"),
-        inverseJoinColumns = @JoinColumn(name = "tag_id")
+    @ManyToMany(
+            cascade = {CascadeType.PERSIST, CascadeType.MERGE},
+            fetch = FetchType.LAZY
     )
-    @ToString.Exclude 
-    @EqualsAndHashCode.Exclude 
+    @JoinTable(
+            name = "provider_tags",
+            joinColumns = @JoinColumn(name = "provider_id", nullable = false),
+            inverseJoinColumns = @JoinColumn(name = "tag_id", nullable = false),
+            indexes = {
+                    @Index(name = "idx_provider_tags_provider_id", columnList = "provider_id"),
+                    @Index(name = "idx_provider_tags_tag_id", columnList = "tag_id")
+            }
+    )
+    @ToString.Exclude
+    // CORRECCIÓN 4: Exclusión explícita para evitar ciclos en Set
+    @EqualsAndHashCode.Exclude
+    @Builder.Default
     private Set<Tag> tags = new HashSet<>();
 
-    // =================================================================
-    // 👮 IMPLEMENTACIÓN DE USER DETAILS (SPRING SECURITY)
-    // =================================================================
+    // ========================================================================
+    // 🔐 IMPLEMENTACIÓN DE UserDetails
+    // ========================================================================
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of(new SimpleGrantedAuthority(role.name()));
+        return List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));
     }
 
     @Override
     public String getUsername() {
-        // Asumiendo que 'email' está en BaseUser
-        return getEmail(); 
+        return getEmail();
     }
 
-    @Override
-    public String getPassword() {
-        // Asumiendo que 'password' está en BaseUser
-        return super.getPassword(); 
+    @Override public String getPassword() { return super.getPassword(); }
+    @Override public boolean isAccountNonExpired() { return true; }
+    @Override public boolean isAccountNonLocked() { return true; }
+    @Override public boolean isCredentialsNonExpired() { return true; }
+    @Override public boolean isEnabled() { return isActive(); }
+
+    // ========================================================================
+    // 🔧 MÉTODOS HELPER
+    // ========================================================================
+
+    public boolean isPersonaFisica() {
+        return legalEntityType == LegalEntityType.PERSONA_FISICA;
     }
 
-    @Override
-    public boolean isAccountNonExpired() {
-        return true;
+    public boolean isEmpresa() {
+        return legalEntityType == LegalEntityType.EMPRESA;
     }
 
-    @Override
-    public boolean isAccountNonLocked() {
-        return true;
+    public boolean hasLocation() {
+        return latitude != null && longitude != null;
     }
 
-    @Override
-    public boolean isCredentialsNonExpired() {
-        return true;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
+    public boolean canOfferServices() {
+        // isEmailVerified() viene de BaseUser
+        return onboardingComplete && isEmailVerified() && isActive();
     }
 }

@@ -1,0 +1,147 @@
+name: "Template: Microservice CI/CD Enterprise"
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        required: true
+        type: string
+        description: "Nombre del servicio (ej: auth-service)"
+      directory:
+        required: true
+        type: string
+        description: "Directorio dentro del monorepo (ej: auth_service)"
+      sonar_project_key:
+        required: true
+        type: string
+        description: "Key del proyecto en SonarCloud"
+      env_secrets_mapping:
+        required: true
+        type: string
+        description: "Mapeo de secretos para Cloud Run (ENV_VAR=SECRET_NAME:latest)"
+    secrets:
+      GCP_PROJECT_ID:
+        required: true
+      GCP_SA_EMAIL:
+        required: true
+      GCP_WIF_PROVIDER:
+        required: true
+      SONAR_TOKEN:
+        required: true
+
+jobs:
+  # ========================================================================
+  # JOB 1: CALIDAD Y SEGURIDAD (CI)
+  # ========================================================================
+  quality-security:
+    name: CI - Quality & Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Importante para Sonar
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Cache SonarCloud
+        uses: actions/cache@v3
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      # 🛡️ 1. Trivy SCA: Escaneo de dependencias (pom.xml)
+      - name: Trivy Dependency Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '${{ inputs.directory }}'
+          format: 'table'
+          exit-code: '1' # Falla si hay criticas
+          ignore-unfixed: true
+          vuln-type: 'library'
+          severity: 'CRITICAL,HIGH'
+
+      # 📊 2. Tests Unitarios/Integración + Cobertura JaCoCo + SonarCloud
+      - name: Test & Analyze
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          cd ${{ inputs.directory }}
+          mvn -B clean verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+          -Dsonar.projectKey=${{ inputs.sonar_project_key }} \
+          -Dsonar.organization=marcos1394 \
+          -Dsonar.host.url=https://sonarcloud.io \
+          -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+
+  # ========================================================================
+  # JOB 2: BUILD & DEPLOY (CD)
+  # ========================================================================
+  build-deploy:
+    name: CD - Build & Deploy
+    needs: quality-security
+    if: github.ref == 'refs/heads/main' # Solo despliega en rama Main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write' # Necesario para GCP Workload Identity
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ☁️ 1. Autenticación Google Cloud (Sin JSON Key, usando OIDC)
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: '${{ secrets.GCP_WIF_PROVIDER }}'
+          service_account: '${{ secrets.GCP_SA_EMAIL }}'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev
+
+      # 🐳 2. Build Docker Image
+      - name: Build Docker Image
+        run: |
+          IMAGE_URI=us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/quhealthy-repo/${{ inputs.service_name }}:${{ github.sha }}
+          cd ${{ inputs.directory }}
+          docker build -t $IMAGE_URI .
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+
+      # 🛡️ 3. Trivy Container Scan: Escaneo de la imagen Docker (OS vulnerabilidades)
+      - name: Trivy Container Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_URI }}
+          format: 'table'
+          exit-code: '1' # Falla si la imagen base es insegura
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      # 🚀 4. Push Image
+      - name: Push Docker Image
+        run: docker push ${{ env.IMAGE_URI }}
+
+      # ☁️ 5. Deploy to Cloud Run (Inyectando secretos de Secret Manager)
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ inputs.service_name }}
+          region: us-central1
+          image: ${{ env.IMAGE_URI }}
+          # Variables de entorno NO sensibles
+          env_vars: |
+            SPRING_PROFILES_ACTIVE=prod
+            SERVER_PORT=8080
+          # Mapeo de secretos (ENV_VAR=GCP_SECRET_NAME:VERSION)
+          secrets: ${{ inputs.env_secrets_mapping }}

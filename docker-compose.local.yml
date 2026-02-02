@@ -1,0 +1,64 @@
+services:
+  # ========================================================================
+  # PostgreSQL + PostGIS (MISMO QUE PRODUCCIÓN EN CLOUD SQL)
+  # ========================================================================
+  postgres:
+    image: postgis/postgis:15-3.3
+    container_name: quhealthy-postgres-local
+    environment:
+      POSTGRES_DB: quhealthy_local
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - quhealthy-network
+
+  # ========================================================================
+  # Google Cloud Pub/Sub Emulator (Para testing local de eventos)
+  # ========================================================================
+  # NOTA: En local puede ser opcional si usas mocks en TestConfig
+  # Si quieres levantar el emulator, descomenta y asegúrate de:
+  # docker pull google/cloud-sdk:emulators
+  # gcp-emulator:
+  #   image: google/cloud-sdk:emulators
+  #   container_name: quhealthy-gcp-emulator-local
+  #   command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085
+  #   ports:
+  #     - "8085:8085"
+  #   environment:
+  #     PUBSUB_EMULATOR_HOST: localhost:8085
+  #   networks:
+  #     - quhealthy-network
+
+  # ========================================================================
+  # PgAdmin (Herramienta visual para PostgreSQL - OPCIONAL)
+  # ========================================================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: quhealthy-pgadmin-local
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@quhealthy.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - quhealthy-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  quhealthy-network:
+    driver: bridge

@@ -1,0 +1,77 @@
+# ============================================================================
+# PERFIL: LOCAL
+# Desarrollo local con PostgreSQL + PostGIS real (vía Docker Compose)
+# ============================================================================
+
+spring:
+  application:
+    name: auth-service
+
+  # ========================================================================
+  # DATASOURCE - PostgreSQL Real (Docker Compose)
+  # ========================================================================
+  datasource:
+    url: jdbc:postgresql://localhost:5432/quhealthy_local
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 20000
+      idle-timeout: 300000
+
+  # ========================================================================
+  # JPA / Hibernate - PostGIS Real
+  # ========================================================================
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          batch_size: 20
+          fetch_size: 50
+        format_sql: true
+    show-sql: true
+
+  # ========================================================================
+  # Google Cloud
+  # ========================================================================
+  cloud:
+    gcp:
+      project-id: quhealthy-local
+      pubsub:
+        enabled: false
+
+# ============================================================================
+# LOGGING
+# ============================================================================
+logging:
+  level:
+    root: INFO
+    com.quhealthy: DEBUG
+    org.springframework.security: DEBUG
+    org.hibernate.SQL: DEBUG
+  file:
+    name: logs/local.log
+
+# ============================================================================
+# JWT
+# ============================================================================
+jwt:
+  secret: local-dev-secret-key-change-in-production
+  expiration: 86400000
+
+# ============================================================================
+# ACTUATOR
+# ============================================================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always

@@ -11,21 +11,78 @@ import java.util.Optional;
 @Repository
 public interface ProviderRepository extends JpaRepository<Provider, Long> {
 
-    boolean existsByEmail(String email);
+    // ========================================================================
+    // 🔍 BÚSQUEDAS PRINCIPALES (Login & Registro)
+    // ========================================================================
 
+    /**
+     * Busca un proveedor por email.
+     * Utilizado en validaciones de registro y auditoría.
+     */
     Optional<Provider> findByEmail(String email);
 
-    Optional<Provider> findByReferralCode(String referralCode);
+    /**
+     * Busca un proveedor ACTIVO por email (Ignora los eliminados).
+     * ⚠️ CRÍTICO: Usar este para el LOGIN en AuthenticationService.
+     */
+    Optional<Provider> findByEmailAndDeletedAtIsNull(String email);
 
-    // ✅ NUEVO: Buscar por Token de Verificación
+    /**
+     * Verifica existencia rápida por email.
+     */
+    boolean existsByEmail(String email);
+
+    /**
+     * Búsqueda flexible para Login (Email o Teléfono).
+     * Solo devuelve usuarios que NO han sido eliminados.
+     */
+    @Query("SELECT p FROM Provider p WHERE (p.email = :identifier OR p.phone = :identifier) AND p.deletedAt IS NULL")
+    Optional<Provider> findByEmailOrPhoneActive(@Param("identifier") String identifier);
+
+    // ========================================================================
+    // 🛡️ SEGURIDAD Y VERIFICACIÓN (Tokens & Selectors)
+    // ========================================================================
+
+    /**
+     * Busca por Token de Verificación de Email.
+     * Usado en: VerificationService.verifyEmail()
+     */
     Optional<Provider> findByEmailVerificationToken(String token);
 
-    // En ProviderRepository.java
+    /**
+     * Busca por SELECTOR de Restablecimiento de Contraseña.
+     * 🔐 PATRÓN SELECTOR/VERIFIER:
+     * Buscamos por el selector (público en la URL) para encontrar al usuario.
+     * Luego el servicio validará el verifier hash.
+     */
+    Optional<Provider> findByResetSelector(String resetSelector);
 
-@Query("SELECT p FROM Provider p WHERE p.email = :identifier OR p.phone = :identifier")
-Optional<Provider> findByEmailOrPhone(@Param("identifier") String identifier);
+    /**
+     * Busca por Token de Verificación de Teléfono (SMS/OTP).
+     * Usado en: VerificationService.verifyPhone()
+     */
+    Optional<Provider> findByPhoneVerificationToken(String token);
 
-Optional<Provider> findByResetSelector(String resetSelector);
+    // ========================================================================
+    // 💼 BÚSQUEDAS DE NEGOCIO (Específicas de Provider)
+    // ========================================================================
 
+    /**
+     * Busca por Slug (URL amigable).
+     * Ej: "clinica-dental-sonrisas"
+     * Útil para validar que no se repita al crear el perfil.
+     */
+    Optional<Provider> findBySlug(String slug);
 
+    /**
+     * Verifica si existe un slug.
+     */
+    boolean existsBySlug(String slug);
+
+    /*
+     * NOTA ARQUITECTÓNICA:
+     * Se ha eliminado 'findByStripeSubscriptionId'.
+     * La gestión de suscripciones pertenece al Payment Service.
+     * El Auth Service solo debe conocer el estado 'hasActivePlan' (boolean).
+     */
 }

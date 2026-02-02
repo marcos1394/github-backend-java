@@ -1,0 +1,46 @@
+name: Auth Service Pipeline 🔐
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'auth_service/**'             # Solo si hay cambios en auth_service
+      - '.github/workflows/auth-service.yml'
+  pull_request:
+    paths:
+      - 'auth_service/**'
+
+jobs:
+  call-workflow:
+    # Llamamos al template que acabamos de crear
+    uses: ./.github/workflows/templates/microservice-pipeline.yml
+    with:
+      service_name: auth-service
+      directory: auth_service
+      sonar_project_key: quhealthy_auth_service
+
+      # 👇 AQUÍ ESTÁ LA MAGIA DE LOS SECRETOS
+      # Formato: VARIABLE_EN_PROPERTIES=NOMBRE_SECRETO_GCP:latest
+      env_secrets_mapping: |
+        DB_URL=application_db_url:latest
+        DB_USER=application_db_user:latest
+        DB_PASSWORD=application_db_password:latest
+        JWT_SECRET=application_jwt_secret:latest
+        
+        RESEND_API_KEY=application_resend_key:latest
+        RESEND_FROM_EMAIL=RESEND_FROM_EMAIL:latest
+        
+        TWILIO_SID=application_twilio_sid:latest
+        TWILIO_TOKEN=application_twilio_token:latest
+        TWILIO_PHONE=application_twilio_phone:latest
+        
+        GOOGLE_CLIENT_ID=application_google_client_id:latest
+        
+        STRIPE_API_KEY=application_stripe_key:latest
+
+    secrets:
+      # Credenciales de infraestructura (GitHub Secrets)
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_SA_EMAIL: ${{ secrets.GCP_SA_EMAIL }}
+      GCP_WIF_PROVIDER: ${{ secrets.GCP_WIF_PROVIDER }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

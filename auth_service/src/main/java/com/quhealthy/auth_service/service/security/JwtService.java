@@ -18,83 +18,94 @@ import java.util.function.Function;
 @Service
 public class JwtService {
 
-    @Value("${jwt.secret}")
+    /**
+     * Llave secreta para firmar los tokens.
+     * DEBE ser de al menos 256 bits (32 caracteres) para HMAC-SHA256.
+     * Lo ideal es tenerla en application.properties.
+     * Aquí ponemos un valor por defecto si no se encuentra en properties.
+     */
+    @Value("${application.security.jwt.secret-key:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}")
     private String secretKey;
 
-    @Value("${jwt.expiration:86400000}") // Default 24 horas
+    /**
+     * Expiración del Token de Acceso (milisegundos).
+     * Por defecto: 1 día (86400000 ms).
+     */
+    @Value("${application.security.jwt.expiration:86400000}")
     private long jwtExpiration;
 
-    // =================================================================
-    // 1. GENERACIÓN DE TOKENS (Crear)
-    // =================================================================
+    /**
+     * Expiración del Refresh Token.
+     * Por defecto: 7 días (604800000 ms).
+     */
+    @Value("${application.security.jwt.refresh-token.expiration:604800000}")
+    private long refreshExpiration;
 
-    // Generar Token COMPLETO (Login exitoso)
-    public String generateToken(Long userId, String email, String role) {
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("id", userId);
-        claims.put("email", email); // Guardamos email en claims custom
-        claims.put("role", role);
-        
-        // IMPORTANTE: Pasamos el email como "Subject" para que Spring Security lo entienda
-        return buildToken(claims, email, jwtExpiration); 
+    // ========================================================================
+    // 📤 EXTRACCIÓN DE DATOS
+    // ========================================================================
+
+    public String extractUsername(String token) {
+        return extractClaim(token, Claims::getSubject);
     }
 
-    // Generar Token PARCIAL (Para 2FA - 5 minutos)
-    public String generatePartialToken(Long userId, String role) {
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("id", userId);
-        claims.put("role", role);
-        claims.put("mfa", "pending");
-        
-        long partialExpiration = 1000 * 60 * 5; // 5 Minutos
-        // Para el token parcial, usamos el ID como subject temporal
-        return buildToken(claims, String.valueOf(userId), partialExpiration);
+    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
+        final Claims claims = extractAllClaims(token);
+        return claimsResolver.apply(claims);
     }
 
-    // Método privado constructor de JWT
-    private String buildToken(Map<String, Object> extraClaims, String subject, long expiration) {
-        return Jwts.builder()
+    // ========================================================================
+    // 🏭 GENERACIÓN DE TOKENS
+    // ========================================================================
+
+    public String generateToken(UserDetails userDetails) {
+        return generateToken(new HashMap<>(), userDetails);
+    }
+
+    public String generateToken(Map<String, Object> extraClaims, UserDetails userDetails) {
+        return buildToken(extraClaims, userDetails, jwtExpiration);
+    }
+
+    public String generateRefreshToken(UserDetails userDetails) {
+        return buildToken(new HashMap<>(), userDetails, refreshExpiration);
+    }
+
+    private String buildToken(
+            Map<String, Object> extraClaims,
+            UserDetails userDetails,
+            long expiration
+    ) {
+        return Jwts
+                .builder()
                 .setClaims(extraClaims)
-                .setSubject(subject) // Establece el dueño del token (Standard JWT 'sub')
+                .setSubject(userDetails.getUsername()) // Email
                 .setIssuedAt(new Date(System.currentTimeMillis()))
                 .setExpiration(new Date(System.currentTimeMillis() + expiration))
                 .signWith(getSignInKey(), SignatureAlgorithm.HS256)
                 .compact();
     }
 
-    // =================================================================
-    // 2. VALIDACIÓN Y EXTRACCIÓN (Leer) - ¡ESTO ES LO NUEVO!
-    // =================================================================
+    // ========================================================================
+    // ✅ VALIDACIÓN
+    // ========================================================================
 
-    // Extraer el "Username" (en nuestro caso, el email) del token
-    public String extractUsername(String token) {
-        return extractClaim(token, Claims::getSubject);
-    }
-
-    // Extraer cualquier dato genérico del token
-    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
-        final Claims claims = extractAllClaims(token);
-        return claimsResolver.apply(claims);
-    }
-
-    // Validar si el token pertenece al usuario y no ha expirado
     public boolean isTokenValid(String token, UserDetails userDetails) {
         final String username = extractUsername(token);
-        // Verifica que el email del token coincida con el usuario de la BD y que no esté vencido
         return (username.equals(userDetails.getUsername())) && !isTokenExpired(token);
     }
 
-    // Verificar si ya caducó
     private boolean isTokenExpired(String token) {
         return extractExpiration(token).before(new Date());
     }
 
-    // Obtener fecha de expiración
     private Date extractExpiration(String token) {
         return extractClaim(token, Claims::getExpiration);
     }
 
-    // Parsear el Token (Abrir la caja fuerte con la llave secreta)
+    // ========================================================================
+    // 🔧 HERRAMIENTAS INTERNAS
+    // ========================================================================
+
     private Claims extractAllClaims(String token) {
         return Jwts
                 .parserBuilder()
@@ -104,7 +115,6 @@ public class JwtService {
                 .getBody();
     }
 
-    // Obtener la llave criptográfica
     private Key getSignInKey() {
         byte[] keyBytes = Decoders.BASE64.decode(secretKey);
         return Keys.hmacShaKeyFor(keyBytes);
