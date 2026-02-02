@@ -13,7 +13,7 @@ on:
 jobs:
   call-workflow:
     # Llamamos al template que acabamos de crear
-    uses: ./.github/workflows/templates/microservice-pipeline.yml
+    uses: ./.github/workflows/microservice-pipeline.yml
     with:
       service_name: auth-service
       directory: auth_service
