@@ -269,7 +269,7 @@
         <dependency>
             <groupId>io.grpc</groupId>
             <artifactId>grpc-netty-shaded</artifactId>
-            <version>1.69.0</version>
+            <version>1.75.0</version>
         </dependency>
 
         <!-- TestContainers Core - Versión explícita 2.0.2 -->
