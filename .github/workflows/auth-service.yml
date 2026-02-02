@@ -10,6 +10,11 @@ on:
     paths:
       - 'auth_service/**'
 
+# 👇 AGREGA ESTE BLOQUE DE PERMISOS AQUÍ
+permissions:
+  contents: read        # Necesario para descargar el código
+  id-token: write       # OBLIGATORIO para autenticarse con Google Cloud (OIDC)
+
 jobs:
   call-workflow:
     # Llamamos al template que acabamos de crear
