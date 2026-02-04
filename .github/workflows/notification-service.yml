@@ -21,7 +21,7 @@ jobs:
     with:
       service_name: notification-service
       directory: notification_service
-      sonar_project_key: quhealthy_notification_service
+      sonar_project_key: quhealthy-notification-service
 
       # 👇 MAPEO DE SECRETOS (Environment Variables -> GCP Secret Manager)
       # Nota: Asumo que usas los mismos nombres de secretos en GCP que en Auth
