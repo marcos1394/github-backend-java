@@ -31,6 +31,7 @@ jobs:
         DB_USER=application_db_user:latest
         DB_PASSWORD=application_db_password:latest
         RESEND_API_KEY=application_resend_key:latest
+        JWT_SECRET=application_jwt_secret:latest
         RESEND_FROM_EMAIL=RESEND_FROM_EMAIL:latest
         TWILIO_SID=application_twilio_sid:latest
         TWILIO_TOKEN=application_twilio_token:latest
