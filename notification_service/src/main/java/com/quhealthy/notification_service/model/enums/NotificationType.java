@@ -5,5 +5,6 @@ public enum NotificationType {
     SUCCESS,    // Verde (ej: "Pago Exitoso")
     WARNING,    // Amarillo (ej: "Tu plan vence pronto")
     ERROR,      // Rojo (ej: "Pago fallido")
-    REMINDER    // Morado (ej: "Tienes cita en 1 hora")
+    REMINDER,   // Morado (ej: "Tienes cita en 1 hora")
+    GEO_ALERT
 }

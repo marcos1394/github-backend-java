@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <title>Cuenta Verificada</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: sans-serif; background-color: #f4f4f7;">
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+  <tr>
+    <td align="center" style="padding: 20px 0;">
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600" style="background-color: #ffffff; border-radius: 8px; border-top: 4px solid #10B981;"> <tr>
+        <td style="padding: 40px 30px; text-align: center;">
+
+          <div style="font-size: 50px; margin-bottom: 20px;">🎉</div>
+
+          <h2 style="color: #333; margin-top: 0;">¡Tu cuenta está verificada!</h2>
+
+          <p style="color: #555; font-size: 16px; line-height: 1.6;">
+            Gracias por confirmar tu correo electrónico. Ahora tienes acceso completo a todos los servicios de <strong>QuHealthy</strong>.
+          </p>
+
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 30px auto;">
+            <tr>
+              <td align="center" bgcolor="#2563EB" style="border-radius: 4px;">
+                <a th:href="${loginLink}" style="color: #ffffff; text-decoration: none; padding: 12px 24px; display: inline-block; font-weight: bold;">
+                  Ir al Dashboard
+                </a>
+              </td>
+            </tr>
+          </table>
+
+        </td>
+      </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>

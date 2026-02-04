@@ -1,0 +1,51 @@
+name: Notification Service Pipeline 🔔
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'notification_service/**'     # 👈 Solo si hay cambios en notification_service
+      - '.github/workflows/notification-service.yml'
+  pull_request:
+    paths:
+      - 'notification_service/**'
+
+# PERMISOS PARA GCP (OIDC)
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  call-workflow:
+    uses: ./.github/workflows/microservice-pipeline.yml
+    with:
+      service_name: notification-service
+      directory: notification_service
+      sonar_project_key: quhealthy_notification_service
+
+      # 👇 MAPEO DE SECRETOS (Environment Variables -> GCP Secret Manager)
+      # Nota: Asumo que usas los mismos nombres de secretos en GCP que en Auth
+      # para DB, Twilio y Resend.
+      env_secrets_mapping: |
+        DB_URL=application_db_url:latest
+        DB_USER=application_db_user:latest
+        DB_PASSWORD=application_db_password:latest
+        
+        # Email (Resend)
+        RESEND_API_KEY=application_resend_key:latest
+        RESEND_FROM_EMAIL=RESEND_FROM_EMAIL:latest
+        
+        # SMS (Twilio)
+        TWILIO_SID=application_twilio_sid:latest
+        TWILIO_TOKEN=application_twilio_token:latest
+        TWILIO_PHONE=application_twilio_phone:latest
+        
+        # Firebase (Si tienes la credencial en un secreto, agrégala aquí)
+        FIREBASE_CREDENTIALS=application_firebase_creds:latest
+
+    secrets:
+      # Credenciales de infraestructura (GitHub Secrets)
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_SA_EMAIL: ${{ secrets.GCP_SA_EMAIL }}
+      GCP_WIF_PROVIDER: ${{ secrets.GCP_WIF_PROVIDER }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

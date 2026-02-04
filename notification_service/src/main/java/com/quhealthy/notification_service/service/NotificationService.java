@@ -3,28 +3,26 @@ package com.quhealthy.notification_service.service;
 import com.quhealthy.notification_service.dto.NotificationResponse;
 import com.quhealthy.notification_service.dto.UnreadCountResponse;
 import com.quhealthy.notification_service.model.Notification;
+import com.quhealthy.notification_service.model.NotificationLog;
+import com.quhealthy.notification_service.model.enums.NotificationChannel;
+import com.quhealthy.notification_service.model.enums.NotificationStatus;
 import com.quhealthy.notification_service.model.enums.NotificationType;
 import com.quhealthy.notification_service.model.enums.TargetRole;
+import com.quhealthy.notification_service.repository.NotificationLogRepository;
 import com.quhealthy.notification_service.repository.NotificationRepository;
-// ✅ VERIFICA ESTOS IMPORTS DE RESEND
-import com.resend.Resend;
-import com.resend.services.emails.model.CreateEmailOptions;
-import com.resend.services.emails.model.CreateEmailResponse;
-import com.twilio.Twilio;
-import com.twilio.rest.api.v2010.account.Message;
-import com.twilio.type.PhoneNumber;
-import jakarta.annotation.PostConstruct;
+import com.quhealthy.notification_service.service.content.TemplateService;
+import com.quhealthy.notification_service.service.integration.EmailService;
+import com.quhealthy.notification_service.service.integration.PushNotificationService;
+import com.quhealthy.notification_service.service.integration.SmsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.thymeleaf.TemplateEngine;
-import org.thymeleaf.context.Context;
 
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -32,148 +30,149 @@ import java.util.List;
 public class NotificationService {
 
     private final NotificationRepository notificationRepository;
-    private final TemplateEngine templateEngine;
+    private final NotificationLogRepository logRepository;
 
-    @Value("${resend.api.key}")
-    private String resendApiKey;
+    // Integraciones
+    private final EmailService emailService;
+    private final SmsService smsService;
+    private final PushNotificationService pushService;
+    private final TemplateService templateService;
 
-    @Value("${resend.from.email:noreply@quhealthy.com}")
-    private String fromEmail;
-
-    @Value("${twilio.account.sid}")
-    private String twilioSid;
-
-    @Value("${twilio.auth.token}")
-    private String twilioToken;
-
-    @Value("${twilio.phone.number}")
-    private String twilioFromNumber;
-
-    private Resend resendClient;
-
-    @PostConstruct
-    public void init() {
-        try {
-            // Inicializar Resend
-            if (resendApiKey != null && !resendApiKey.isBlank()) {
-                this.resendClient = new Resend(resendApiKey);
-            }
-            // Inicializar Twilio
-            if (twilioSid != null && !twilioSid.isBlank()) {
-                Twilio.init(twilioSid, twilioToken);
-            }
-            log.info("📡 Notification Service inicializado.");
-        } catch (Exception e) {
-            log.warn("⚠️ No se pudieron inicializar los clientes externos (Resend/Twilio): {}", e.getMessage());
-        }
-    }
-
+    /**
+     * MÉTODO MAESTRO: Recibe un evento y decide por qué canales notificar.
+     */
     @Transactional
-    public void createAndSend(Long userId, TargetRole role, NotificationType type, 
-                              String title, String message, String actionLink, 
-                              String recipientContact, List<String> channels) {
-        
-        log.info("🔔 Procesando notificación para Usuario {} [{}]: {}", userId, role, title);
+    public void createAndSend(
+            Long userId,
+            TargetRole role,
+            NotificationType type,
+            String title,
+            String simpleMessage, // Mensaje corto para SMS/Push/InApp
+            String actionLink,
+            String recipientContact, // Email o Teléfono principal
+            List<String> channels, // ["EMAIL", "SMS", "IN_APP"]
+            Map<String, Object> templateVariables, // Datos para el HTML
+            String templateName // Nombre del archivo HTML (opcional)
+    ) {
 
-        // 1. In-App
-        if (channels.contains("IN_APP") || channels.isEmpty()) {
-            Notification notification = Notification.builder()
+        // 1. Siempre guardar IN_APP si está en la lista o por defecto
+        if (channels.contains("IN_APP")) {
+            Notification inApp = Notification.builder()
                     .userId(userId)
                     .targetRole(role)
                     .type(type)
                     .title(title)
-                    .message(message)
+                    .message(simpleMessage)
                     .actionLink(actionLink)
-                    .isRead(false) // @Builder.Default manejará esto, pero ser explícito no daña
+                    .isRead(false)
                     .build();
-            notificationRepository.save(notification);
+            notificationRepository.save(inApp);
         }
 
-        // 2. Email
-        if (channels.contains("EMAIL") && recipientContact != null && recipientContact.contains("@")) {
-            sendEmailSafely(recipientContact, title, message);
-        }
+        // 2. Procesar canales externos
+        for (String channelStr : channels) {
+            try {
+                NotificationChannel channel = NotificationChannel.valueOf(channelStr);
 
-        // 3. SMS/WhatsApp
-        if ((channels.contains("SMS") || channels.contains("WHATSAPP")) && recipientContact != null) {
-            sendSmsSafely(recipientContact, message, channels.contains("WHATSAPP"));
-        }
-    }
-    
-    private void sendEmailSafely(String to, String subject, String body) {
-        if (resendClient == null) return;
-        
-        try {
-            // Usamos CreateEmailOptions del SDK de Resend
-            CreateEmailOptions params = CreateEmailOptions.builder()
-                    .from(fromEmail)
-                    .to(to)
-                    .subject(subject)
-                    .html("<p>" + body + "</p>")
-                    .build();
+                // Ignoramos IN_APP aquí porque ya lo guardamos arriba
+                if (channel == NotificationChannel.IN_APP) continue;
 
-            CreateEmailResponse data = resendClient.emails().send(params);
-            log.info("📧 Email enviado a {}: ID {}", to, data.getId());
+                processExternalChannel(channel, userId, role, recipientContact, title, simpleMessage, templateName, templateVariables);
 
-        } catch (Exception e) {
-            log.error("❌ Error enviando email: {}", e.getMessage());
+            } catch (IllegalArgumentException e) {
+                log.warn("Canal desconocido ignorado: {}", channelStr);
+            }
         }
     }
 
-    private void sendSmsSafely(String to, String body, boolean isWhatsapp) {
-        try {
-            String finalTo = to;
-            String finalFrom = twilioFromNumber;
+    private void processExternalChannel(NotificationChannel channel, Long userId, TargetRole role, String contact, String title, String body, String templateName, Map<String, Object> vars) {
 
-            if (isWhatsapp) {
-                finalTo = "whatsapp:" + to;
-                finalFrom = "whatsapp:" + twilioFromNumber; 
+        // Crear Log Inicial
+        NotificationLog logEntry = NotificationLog.builder()
+                .userId(userId)
+                .targetRole(role)
+                .channel(channel)
+                .recipient(contact)
+                .subject(title)
+                .status(NotificationStatus.PENDING)
+                .build();
+
+        logEntry = logRepository.save(logEntry);
+
+        try {
+            String providerId = null;
+
+            switch (channel) {
+                case EMAIL:
+                    // Si hay template, lo generamos. Si no, usamos el texto plano en HTML simple.
+                    String htmlContent = (templateName != null)
+                            ? templateService.generateContent(templateName, vars)
+                            : "<p>" + body + "</p>";
+
+                    providerId = emailService.sendEmail(contact, title, htmlContent);
+                    break;
+
+                case SMS:
+                    providerId = smsService.sendSms(contact, body);
+                    break;
+
+                case PUSH_NOTIFICATION:
+                    // Para Push, asumimos que 'contact' es el Device Token
+                    providerId = pushService.sendPush(contact, title, body, null);
+                    break;
+
+                default:
+                    throw new UnsupportedOperationException("Canal no implementado: " + channel);
             }
 
-            Message.creator(
-                    new PhoneNumber(finalTo),
-                    new PhoneNumber(finalFrom),
-                    body
-            ).create();
+            logEntry.setStatus(NotificationStatus.SENT);
+            logEntry.setProviderId(providerId);
 
         } catch (Exception e) {
-            log.error("❌ Error enviando SMS/WA: {}", e.getMessage());
+            logEntry.setStatus(NotificationStatus.FAILED);
+            logEntry.setErrorMessage(e.getMessage());
+            log.error("Fallo envío {} a {}: {}", channel, contact, e.getMessage());
         }
-    }
 
-    // --- Métodos de Lectura ---
-
-    @Transactional(readOnly = true)
-    public Page<NotificationResponse> getUserNotifications(Long userId, String roleStr, Pageable pageable) {
-        TargetRole role = TargetRole.valueOf(roleStr);
-        return notificationRepository.findByUserIdAndTargetRole(userId, role, pageable)
-                .map(this::mapToResponse);
+        logRepository.save(logEntry);
     }
 
     @Transactional(readOnly = true)
-    public UnreadCountResponse getUnreadCount(Long userId, String roleStr) {
-        TargetRole role = TargetRole.valueOf(roleStr);
+    public Page<NotificationResponse> getUserNotifications(Long userId, TargetRole role, Pageable pageable) {
+        // 1. Obtener Entidades de BD
+        Page<Notification> notifications = notificationRepository.findByUserIdAndTargetRole(userId, role, pageable);
+
+        // 2. Mapear Entidad -> DTO
+        return notifications.map(this::mapToDto);
+    }
+
+    @Transactional(readOnly = true)
+    public UnreadCountResponse getUnreadCount(Long userId, TargetRole role) {
         long count = notificationRepository.countByUserIdAndTargetRoleAndIsReadFalse(userId, role);
-        return new UnreadCountResponse(count);
+        return UnreadCountResponse.builder().unreadCount(count).build();
     }
 
     @Transactional
-    public void markAllAsRead(Long userId, String roleStr) {
-        TargetRole role = TargetRole.valueOf(roleStr);
+    public void markOneAsRead(Long notificationId, Long userId, TargetRole role) {
+        Notification notification = notificationRepository.findById(notificationId)
+                .orElseThrow(() -> new RuntimeException("Notificación no encontrada"));
+
+        // Seguridad: Verificar que la notificación pertenece al usuario y su rol actual
+        if (!notification.getUserId().equals(userId) || !notification.getTargetRole().equals(role)) {
+            throw new SecurityException("No tienes permiso para modificar esta notificación");
+        }
+
+        notification.setRead(true);
+        notificationRepository.save(notification);
+    }
+
+    @Transactional
+    public void markAllAsRead(Long userId, TargetRole role) {
         notificationRepository.markAllAsRead(userId, role);
     }
-    
-    @Transactional
-    public void markOneAsRead(Long notificationId, Long userId) {
-        notificationRepository.findById(notificationId).ifPresent(n -> {
-            if (n.getUserId().equals(userId)) {
-                n.setRead(true);
-                notificationRepository.save(n);
-            }
-        });
-    }
 
-    private NotificationResponse mapToResponse(Notification n) {
+    // Helper de Mapeo
+    private NotificationResponse mapToDto(Notification n) {
         return NotificationResponse.builder()
                 .id(n.getId())
                 .title(n.getTitle())
@@ -181,7 +180,9 @@ public class NotificationService {
                 .type(n.getType())
                 .isRead(n.isRead())
                 .actionLink(n.getActionLink())
+                .metadata(n.getMetadata())
                 .createdAt(n.getCreatedAt())
                 .build();
     }
+
 }

@@ -1,0 +1,61 @@
+server:
+  port: 8082 # 👈 Diferente al Auth Service
+
+spring:
+  application:
+    name: notification-service
+
+  # Formato de fechas JSON (ISO-8601)
+  jackson:
+    date-format: yyyy-MM-dd'T'HH:mm:ss
+    time-zone: UTC
+    # ✂️ SECCIÓN ELIMINADA: serialization con write-dates-as-timestamps ya no se usa así
+
+  # JPA Base
+  jpa:
+    open-in-view: false
+    show-sql: false
+    hibernate:
+      ddl-auto: validate # En prod nunca usamos update/create
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 20
+        format_sql: false
+
+# Configuración de Actuator (Health Checks para Kubernetes/Cloud Run)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+# 🔑 SECRETOS (Se inyectan por variables de entorno en Cloud Run)
+application:
+  security:
+    jwt:
+      secret-key: ${JWT_SECRET_KEY} # Debe coincidir con Auth
+
+resend:
+  api:
+    key: ${RESEND_API_KEY}
+  from:
+    email: ${RESEND_FROM_EMAIL:noreply@quhealthy.org}
+
+twilio:
+  account:
+    sid: ${TWILIO_ACCOUNT_SID}
+  auth:
+    token: ${TWILIO_AUTH_TOKEN}
+  phone:
+    number: ${TWILIO_PHONE_NUMBER}
+
+# Configuración de GCP Pub/Sub
+gcp:
+  pubsub:
+    subscription:
+      account: ${GCP_PUBSUB_SUB_ACCOUNT:notification-account-sub}
+      appointment: ${GCP_PUBSUB_SUB_APPOINTMENT:notification-appointment-sub}

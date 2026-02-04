@@ -2,7 +2,10 @@ package com.quhealthy.notification_service.controller;
 
 import com.quhealthy.notification_service.dto.NotificationResponse;
 import com.quhealthy.notification_service.dto.UnreadCountResponse;
+import com.quhealthy.notification_service.model.enums.TargetRole;
 import com.quhealthy.notification_service.service.NotificationService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -12,74 +15,95 @@ import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @Slf4j
 @RestController
 @RequestMapping("/api/notifications")
 @RequiredArgsConstructor
+@Tag(
+        name = "Notificaciones In-App",
+        description = "Endpoints para la bandeja de entrada de notificaciones del usuario (Campanita)"
+)
 public class NotificationController {
 
     private final NotificationService notificationService;
 
-    /**
-     * ✅ OBTENER HISTORIAL (Paginado)
-     * GET /api/notifications?page=0&size=10
-     */
+    // =================================================================
+    // 📨 BANDEJA DE ENTRADA (Lectura)
+    // =================================================================
+
+    @Operation(
+            summary = "Obtener historial",
+            description = "Devuelve las notificaciones paginadas del usuario autenticado."
+    )
     @GetMapping
     public ResponseEntity<Page<NotificationResponse>> getMyNotifications(
-            @AuthenticationPrincipal Long userId, // Extraído del JWT
             Authentication authentication,
-            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        
-        String role = extractRoleFromAuth(authentication);
-        log.debug("📩 Consultando notificaciones para Usuario: {} Rol: {}", userId, role);
-        
-        return ResponseEntity.ok(notificationService.getUserNotifications(userId, role, pageable));
+            @PageableDefault(
+                    size = 20,
+                    sort = "createdAt",
+                    direction = Sort.Direction.DESC
+            ) Pageable pageable
+    ) {
+        Long userId = extractUserId(authentication);
+        TargetRole role = extractRoleFromAuth(authentication);
+
+        log.debug("📩 Consultando inbox para Usuario: {} Rol: {}", userId, role);
+
+        return ResponseEntity.ok(
+                notificationService.getUserNotifications(userId, role, pageable)
+        );
     }
 
-    /**
-     * ✅ OBTENER CONTADOR NO LEÍDAS (Badge 🔴)
-     * GET /api/notifications/unread-count
-     * Ideal para llamar en el Navbar cada X segundos o al cargar la app.
-     */
+    @Operation(
+            summary = "Contador de No Leídas",
+            description = "Devuelve el número para el badge rojo (🔴) de la UI."
+    )
     @GetMapping("/unread-count")
     public ResponseEntity<UnreadCountResponse> getUnreadCount(
-            @AuthenticationPrincipal Long userId,
-            Authentication authentication) {
-        
-        String role = extractRoleFromAuth(authentication);
-        return ResponseEntity.ok(notificationService.getUnreadCount(userId, role));
+            Authentication authentication
+    ) {
+        Long userId = extractUserId(authentication);
+        TargetRole role = extractRoleFromAuth(authentication);
+
+        return ResponseEntity.ok(
+                notificationService.getUnreadCount(userId, role)
+        );
     }
 
-    /**
-     * ✅ MARCAR UNA COMO LEÍDA
-     * PUT /api/notifications/{id}/read
-     * Se llama cuando el usuario hace click en una notificación específica.
-     */
+    // =================================================================
+    // 🖱️ ACCIONES (Escritura / Estado)
+    // =================================================================
+
+    @Operation(
+            summary = "Marcar una como leída",
+            description = "Se llama cuando el usuario hace click en una notificación específica."
+    )
     @PutMapping("/{id}/read")
     public ResponseEntity<Void> markOneAsRead(
             @PathVariable Long id,
-            @AuthenticationPrincipal Long userId) {
-        
-        notificationService.markOneAsRead(id, userId);
-        return ResponseEntity.noContent().build(); // 204 No Content
+            Authentication authentication
+    ) {
+        Long userId = extractUserId(authentication);
+        TargetRole role = extractRoleFromAuth(authentication);
+
+        notificationService.markOneAsRead(id, userId, role);
+        return ResponseEntity.noContent().build();
     }
 
-    /**
-     * ✅ MARCAR TODAS COMO LEÍDAS
-     * PUT /api/notifications/read-all
-     * Botón "Marcar todo como leído" en la bandeja.
-     */
+    @Operation(
+            summary = "Marcar todas como leídas",
+            description = "Botón 'Marcar todo como leído' para limpiar la bandeja."
+    )
     @PutMapping("/read-all")
     public ResponseEntity<Void> markAllAsRead(
-            @AuthenticationPrincipal Long userId,
-            Authentication authentication) {
-        
-        String role = extractRoleFromAuth(authentication);
+            Authentication authentication
+    ) {
+        Long userId = extractUserId(authentication);
+        TargetRole role = extractRoleFromAuth(authentication);
+
         notificationService.markAllAsRead(userId, role);
-        
         return ResponseEntity.noContent().build();
     }
 
@@ -88,24 +112,45 @@ public class NotificationController {
     // =================================================================
 
     /**
-     * Extrae el rol limpio ("PROVIDER" o "CONSUMER") del objeto de autenticación.
-     * Spring Security suele guardar "ROLE_PROVIDER", así que limpiamos el prefijo.
+     * Extrae el userId del Authentication.
+     * En tests: viene de MockMvc.principal(...)
+     * En prod: viene del JwtAuthenticationToken / CustomPrincipal
      */
-    private String extractRoleFromAuth(Authentication auth) {
-        if (auth == null || auth.getAuthorities().isEmpty()) {
-            throw new SecurityException("Usuario no autenticado o sin roles.");
+    private Long extractUserId(Authentication authentication) {
+        if (authentication == null || authentication.getPrincipal() == null) {
+            throw new IllegalStateException("Usuario no autenticado");
         }
 
-        // Buscamos el primer rol que coincida con nuestra lógica
+        Object principal = authentication.getPrincipal();
+
+        if (principal instanceof Long id) {
+            return id;
+        }
+
+        throw new IllegalStateException(
+                "Principal no soportado: " + principal.getClass().getName()
+        );
+    }
+
+    /**
+     * Extrae el rol limpio y tipado (Enum) del objeto de autenticación.
+     * Convierte "ROLE_PROVIDER" -> TargetRole.PROVIDER
+     */
+    private TargetRole extractRoleFromAuth(Authentication auth) {
+        if (auth == null || auth.getAuthorities() == null || auth.getAuthorities().isEmpty()) {
+            log.warn("⚠️ Usuario autenticado sin roles. Asignando CONSUMER por defecto.");
+            return TargetRole.CONSUMER;
+        }
+
         for (GrantedAuthority authority : auth.getAuthorities()) {
-            String role = authority.getAuthority(); // Ej: "ROLE_PROVIDER"
-            
-            if (role.contains("PROVIDER")) return "PROVIDER";
-            if (role.contains("CONSUMER") || role.contains("PATIENT")) return "CONSUMER";
-            if (role.contains("ADMIN")) return "ADMIN";
+            String role = authority.getAuthority().toUpperCase();
+
+            if (role.contains("PROVIDER")) return TargetRole.PROVIDER;
+            if (role.contains("CONSUMER") || role.contains("PATIENT")) return TargetRole.CONSUMER;
+            if (role.contains("ADMIN")) return TargetRole.ADMIN;
         }
 
-        // Fallback por seguridad
-        throw new SecurityException("Rol de usuario no reconocido para notificaciones.");
+        log.warn("⚠️ Rol desconocido en JWT: {}. Asignando CONSUMER.", auth.getAuthorities());
+        return TargetRole.CONSUMER;
     }
 }

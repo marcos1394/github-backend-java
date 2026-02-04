@@ -68,7 +68,7 @@ public class SecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
         
         // Dominios permitidos (Frontend Local y Producción)
-        configuration.setAllowedOrigins(List.of("http://localhost:3000", "https://quhealthy.org")); 
+        configuration.setAllowedOrigins(List.of("http://localhost:3000", "https://quhealthy.org", "https://www.quhealthy.org"));
         
         // Métodos HTTP permitidos
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));

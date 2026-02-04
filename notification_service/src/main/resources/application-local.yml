@@ -1,0 +1,45 @@
+# ============================================================================
+# PERFIL: LOCAL
+# Ejecutar con: -Dspring.profiles.active=local
+# ============================================================================
+
+spring:
+  datasource:
+    # ⚠️ Nota: Base de datos distinta: quhealthy_notification_local
+    url: jdbc:postgresql://localhost:5432/quhealthy_notification_local
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update # Para crear las tablas automáticamente en dev
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+# Logs detallados para ver qué pasa
+logging:
+  level:
+    root: INFO
+    com.quhealthy: DEBUG
+    org.hibernate.SQL: DEBUG
+
+# Claves falsas para desarrollo (Los servicios tienen validaciones para no fallar)
+application:
+  security:
+    jwt:
+      secret-key: local-dev-secret-key-change-in-production-must-match-auth
+
+resend:
+  api:
+    key: re_123_fake_dev
+
+twilio:
+  account:
+    sid: AC_fake_dev
+  auth:
+    token: fake_token
+  phone:
+    number: "+15550000000"

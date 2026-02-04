@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <title>Nuevo Inicio de Sesión Detectado</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: sans-serif; background-color: #f4f4f7;">
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+  <tr>
+    <td align="center" style="padding: 20px 0;">
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600" style="background-color: #ffffff; border-radius: 8px; border-top: 4px solid #3B82F6;"> <tr>
+        <td style="padding: 40px 30px;">
+          <h2 style="color: #333; margin-top: 0;">Nuevo inicio de sesión</h2>
+
+          <p style="color: #555; font-size: 16px;">
+            Hola, <span th:text="${name}">Usuario</span>.
+          </p>
+          <p style="color: #555; font-size: 16px;">
+            Detectamos un nuevo inicio de sesión en tu cuenta de QuHealthy.
+          </p>
+
+          <div style="background-color: #F3F4F6; padding: 15px; border-radius: 6px; margin: 20px 0; font-size: 14px; color: #374151;">
+            <p style="margin: 5px 0;"><strong>📅 Cuándo:</strong> <span th:text="${time}">Hoy, 10:00 AM</span></p>
+            <p style="margin: 5px 0;"><strong>💻 Dispositivo:</strong> <span th:text="${device}">Chrome en Windows</span></p>
+            <p style="margin: 5px 0;"><strong>🌍 Ubicación aprox:</strong> <span th:text="${location}">Ciudad de México, MX</span></p>
+            <p style="margin: 5px 0;"><strong>🌐 IP:</strong> <span th:text="${ip}">192.168.1.1</span></p>
+          </div>
+
+          <p style="color: #555; font-size: 16px;">
+            Si fuiste tú, puedes ignorar este mensaje.
+          </p>
+
+          <div style="margin-top: 30px; border-top: 1px solid #E5E7EB; padding-top: 20px;">
+            <p style="color: #B91C1C; font-weight: bold; margin-bottom: 10px;">¿No fuiste tú?</p>
+            <a th:href="${lockAccountLink}" style="color: #DC2626; text-decoration: underline; font-size: 14px;">
+              Bloquear mi cuenta y cambiar contraseña
+            </a>
+          </div>
+        </td>
+      </tr>
+      </table>
+
+      <div style="text-align: center; margin-top: 20px; color: #999; font-size: 12px;">
+        <p>Seguridad de QuHealthy</p>
+      </div>
+    </td>
+  </tr>
+</table>
+</body>
+</html>

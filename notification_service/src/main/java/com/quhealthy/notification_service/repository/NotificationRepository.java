@@ -14,20 +14,23 @@ import org.springframework.stereotype.Repository;
 public interface NotificationRepository extends JpaRepository<Notification, Long> {
 
     /**
-     * Obtiene las notificaciones paginadas de un usuario específico.
-     * Ordenadas por fecha descendente (lo más nuevo arriba) gracias al Pageable.
+     * ✅ UI HISTORIAL: Obtiene las notificaciones paginadas de un usuario.
+     * * Filtra por el ROL para no mezclar notificaciones de Médico con las de Paciente.
+     * El objeto Pageable se encarga del LIMIT, OFFSET y ORDER BY created_at DESC.
      */
     Page<Notification> findByUserIdAndTargetRole(Long userId, TargetRole targetRole, Pageable pageable);
 
     /**
-     * Cuenta cuántas notificaciones NO LEÍDAS tiene el usuario.
-     * Vital para el numerito rojo (Badge) en la UI.
+     * ✅ UI BADGE: Cuenta cuántas notificaciones NO LEÍDAS tiene el usuario.
+     * * Se usa para mostrar el numerito rojo en la campana de la App/Web.
+     * Ejemplo: "Tienes (5) notificaciones nuevas".
      */
     long countByUserIdAndTargetRoleAndIsReadFalse(Long userId, TargetRole targetRole);
 
     /**
-     * Marcar TODAS como leídas de un golpe (Bulk Update).
-     * Mucho más eficiente que traerlas y guardarlas una por una.
+     * ✅ UI ACCIÓN: Marcar TODAS como leídas de un golpe.
+     * * Usamos @Modifying y @Query para hacerlo eficiente a nivel de Base de Datos
+     * en lugar de traer 100 objetos a memoria y guardarlos uno por uno.
      */
     @Modifying
     @Query("UPDATE Notification n SET n.isRead = true WHERE n.userId = :userId AND n.targetRole = :role AND n.isRead = false")

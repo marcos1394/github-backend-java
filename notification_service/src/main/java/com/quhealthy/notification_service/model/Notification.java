@@ -7,7 +7,8 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.hibernate.annotations.CreationTimestamp;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
 
@@ -17,9 +18,11 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "notifications", indexes = {
-    @Index(name = "idx_notif_user", columnList = "user_id, target_role, created_at DESC"),
-    @Index(name = "idx_notif_read", columnList = "is_read")
+        // Índice compuesto vital para: "Dame las notificaciones del Médico X ordenadas por fecha"
+        @Index(name = "idx_notif_user_role", columnList = "user_id, target_role, created_at DESC"),
+        @Index(name = "idx_notif_read", columnList = "is_read")
 })
+@EntityListeners(AuditingEntityListener.class)
 public class Notification {
 
     @Id
@@ -29,12 +32,14 @@ public class Notification {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
+    // ✅ VITAL: Separa si la notificación es para su perfil de Médico o de Paciente
     @Enumerated(EnumType.STRING)
     @Column(name = "target_role", nullable = false)
     private TargetRole targetRole;
 
+    // ✅ UI: Define el color/ícono (INFO, SUCCESS, WARNING, etc)
     @Enumerated(EnumType.STRING)
-    @Column(name = "type", nullable = false)
+    @Column(nullable = false)
     private NotificationType type;
 
     @Column(nullable = false)
@@ -43,18 +48,20 @@ public class Notification {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String message;
 
-    // ✅ CORRECCIÓN AQUÍ: Agregamos @Builder.Default para evitar el warning
     @Builder.Default
     @Column(name = "is_read", nullable = false)
     private boolean isRead = false;
 
+    // Para Geo: Aquí iría "quhealthy://map?providerId=50"
     @Column(name = "action_link")
     private String actionLink;
 
-    @Column(name = "source_event")
-    private String sourceEvent;
+    // ✅ GEO FLEXIBLE: Aquí guardamos las coordenadas si es una notificación de ubicación
+    // Ej: {"latitude": 19.43, "longitude": -99.13, "promoCode": "DISCOUNT10"}
+    @Column(columnDefinition = "TEXT")
+    private String metadata;
 
-    @CreationTimestamp
-    @Column(name = "created_at", updatable = false)
+    @CreatedDate
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 }

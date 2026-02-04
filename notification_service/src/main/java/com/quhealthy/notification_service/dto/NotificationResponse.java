@@ -16,19 +16,25 @@ import java.time.LocalDateTime;
 public class NotificationResponse {
 
     private Long id;
-    
+
     private String title;
-    
+
     private String message;
-    
-    private NotificationType type; // INFO, WARNING, ERROR, SUCCESS
-    
+
+    // INFO, SUCCESS, WARNING, ERROR, REMINDER, GEO_ALERT
+    private NotificationType type;
+
     private boolean isRead;
-    
-    private String actionLink; // La URL a donde redirige al hacer click
-    
-    // Formato amigable para el frontend (ISO-8601)
-    // El frontend se encargará de convertirlo a "Hace 5 minutos"
+
+    private String actionLink;
+
+    /**
+     * ✅ NUEVO: Datos extra para lógica avanzada en Frontend.
+     * Ejemplo Geo: "{ 'lat': 19.43, 'lng': -99.13, 'storeId': 50 }"
+     * El frontend hará JSON.parse(metadata) para usarlo.
+     */
+    private String metadata;
+
     @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime createdAt;
 }
