@@ -3,7 +3,7 @@ package com.quhealthy.catalog_service.config;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod; // 👈 Importante para diferenciar lectura de escritura
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -26,56 +26,41 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            // 1. CSRF Desactivado: Arquitectura Stateless/Rest
-            .csrf(AbstractHttpConfigurer::disable)
-            
-            // 2. CORS Activado: Homologado con el resto del sistema
-            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-            
-            // 3. Reglas de Autorización (Adaptadas para Catálogo)
-            .authorizeHttpRequests(auth -> auth
-                // 🔓 PUBLICO: Health Checks (Actuator)
-                .requestMatchers("/actuator/**").permitAll()
-                
-                // 🔓 PUBLICO: Leer Servicios y Paquetes (GET)
-                // Permitimos que cualquiera vea la "Carta de Servicios" del doctor.
-                // Si en el futuro quieres que solo pacientes registrados lo vean, quita esta línea.
-                .requestMatchers(HttpMethod.GET, "/api/catalog/**").permitAll()
-                
-                // 🔒 PROTEGIDO: Crear, Editar, Eliminar (POST, PUT, DELETE)
-                // Aquí exigimos Token válido (Doctor gestionando su menú)
-                .anyRequest().authenticated()
-            )
-            
-            // 4. Gestión de Sesión: Stateless (Sin cookies de sesión)
-            .sessionManagement(session -> session
-                .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-            )
-            
-            // 5. Filtro JWT antes del estándar
-            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                .csrf(AbstractHttpConfigurer::disable)
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .authorizeHttpRequests(auth -> auth
+                        // 🔓 PUBLICO: Health Checks (Vital para Cloud Run)
+                        .requestMatchers("/actuator/**").permitAll()
+
+                        // 🔓 PUBLICO: Swagger / OpenAPI
+                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+
+                        // 🔓 PUBLICO: Lectura del Catálogo (Tienda)
+                        // Permitimos que cualquiera vea los servicios/productos (GET)
+                        .requestMatchers(HttpMethod.GET, "/api/catalog/**").permitAll()
+
+                        // 🔒 PROTEGIDO: Gestión del Catálogo (Admin/Provider)
+                        // Crear (POST), Editar (PUT/PATCH), Eliminar (DELETE) requiere Token
+                        .requestMatchers("/api/catalog/**").authenticated()
+
+                        // Cualquier otra ruta requiere autenticación por defecto
+                        .anyRequest().authenticated()
+                )
+                .sessionManagement(session -> session
+                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                )
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
 
-    /**
-     * Configuración CORS global.
-     * Mantenemos la misma configuración que en Payment y Review Service.
-     */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        
-        // Dominios permitidos (Frontend Local y Producción)
-        configuration.setAllowedOrigins(List.of("http://localhost:3000", "https://quhealthy.org")); 
-        
-        // Métodos HTTP permitidos
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        
-        // Headers permitidos
+        // Mantenemos los mismos orígenes que en Onboarding para consistencia en el Frontend
+        configuration.setAllowedOrigins(List.of("http://localhost:3000", "https://quhealthy.org", "https://www.quhealthy.org"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin", "Access-Control-Request-Method", "Access-Control-Request-Headers"));
-        
-        // Permitir credenciales
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

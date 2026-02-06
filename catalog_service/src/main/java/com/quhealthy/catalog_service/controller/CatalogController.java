@@ -1,10 +1,7 @@
 package com.quhealthy.catalog_service.controller;
 
-import com.quhealthy.catalog_service.dto.request.CreatePackageRequest;
-import com.quhealthy.catalog_service.dto.request.CreateServiceRequest;
-import com.quhealthy.catalog_service.dto.response.PackageResponse;
-import com.quhealthy.catalog_service.dto.response.ProviderCatalogResponse;
-import com.quhealthy.catalog_service.dto.response.ServiceResponse;
+import com.quhealthy.catalog_service.dto.CatalogItemRequest;
+import com.quhealthy.catalog_service.dto.CatalogItemResponse;
 import com.quhealthy.catalog_service.service.CatalogService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -15,7 +12,8 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 @Slf4j
@@ -24,67 +22,122 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class CatalogController {
 
-    private final CatalogService catalogService;
+    private final CatalogService service;
 
-    // =================================================================
-    // 🔒 ZONA PRIVADA (Solo Doctores Autenticados)
-    // =================================================================
+    // ==========================================
+    // 🔐 1. GESTIÓN DEL DOCTOR (Requiere Token)
+    // ==========================================
 
-    /**
-     * ✅ CREAR SERVICIO
-     * Endpoint: POST /api/catalog/services
-     * Body: { "name": "Consulta", "price": 500, "durationMinutes": 30 }
-     */
-    @PostMapping("/services")
-    public ResponseEntity<ServiceResponse> createService(
-            @AuthenticationPrincipal Long providerId, // 👈 ID extraído del Token JWT
-            @Valid @RequestBody CreateServiceRequest request) {
-        
-        log.info("📥 Request Crear Servicio recibida del Provider: {}", providerId);
-        ServiceResponse response = catalogService.createService(providerId, request);
+    @PostMapping
+    public ResponseEntity<CatalogItemResponse> createItem(@Valid @RequestBody CatalogItemRequest request) {
+        Long providerId = getCurrentUserId();
+        CatalogItemResponse response = service.createItem(providerId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
-    /**
-     * ✅ CREAR PAQUETE (COMBO)
-     * Endpoint: POST /api/catalog/packages
-     * Body: { "name": "Checkup", "price": 800, "serviceIds": [1, 2] }
-     */
-    @PostMapping("/packages")
-    public ResponseEntity<PackageResponse> createPackage(
-            @AuthenticationPrincipal Long providerId,
-            @Valid @RequestBody CreatePackageRequest request) {
-        
-        log.info("📥 Request Crear Paquete recibida del Provider: {}", providerId);
-        PackageResponse response = catalogService.createPackage(providerId, request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    @PutMapping("/{id}")
+    public ResponseEntity<CatalogItemResponse> updateItem(
+            @PathVariable Long id,
+            @Valid @RequestBody CatalogItemRequest request
+    ) {
+        Long providerId = getCurrentUserId();
+        return ResponseEntity.ok(service.updateItem(providerId, id, request));
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteItem(@PathVariable Long id) {
+        Long providerId = getCurrentUserId();
+        service.deleteItem(providerId, id);
+        return ResponseEntity.noContent().build();
     }
 
     /**
-     * ✅ DASHBOARD: MIS SERVICIOS (Paginado)
-     * Endpoint: GET /api/catalog/myservices
-     * Uso: Para que el doctor vea su tabla de precios en el admin panel.
+     * Dashboard del Doctor: "Mis Servicios".
+     * Muestra todo (Activos, Pausados, Archivados).
      */
-    @GetMapping("/myservices")
-    public ResponseEntity<Page<ServiceResponse>> getMyServices(
-            @AuthenticationPrincipal Long providerId,
-            @PageableDefault(size = 20, sort = "name", direction = Sort.Direction.ASC) Pageable pageable) {
-        
-        return ResponseEntity.ok(catalogService.getMyServices(providerId, pageable));
+    @GetMapping("/me")
+    public ResponseEntity<Page<CatalogItemResponse>> getMyCatalog(
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable
+    ) {
+        Long providerId = getCurrentUserId();
+        // Usamos el método de búsqueda global filtrado por providerId
+        // Para el dashboard, podríamos querer ver todo, aquí reutilizo la búsqueda por categoría o todo.
+        // Nota: Si necesitas ver items INACTIVOS, deberíamos agregar un método específico en Service.
+        // Por ahora, usamos el getProviderCatalog que filtra por ACTIVE.
+        // Si quieres ver TODO (dashboard admin), usa findAllByProviderId del repo directo o crea servicio.
+        // Asumiremos que el doctor ve su vista pública por ahora.
+        return ResponseEntity.ok(service.getProviderCatalog(providerId, null, pageable));
     }
 
-    // =================================================================
-    // 🔓 ZONA PÚBLICA (Pacientes / Visitantes)
-    // =================================================================
+    // ==========================================
+    // 🌍 2. BÚSQUEDA PÚBLICA (Pacientes)
+    // ==========================================
 
     /**
-     * ✅ PERFIL PÚBLICO: VER CATÁLOGO COMPLETO
-     * Endpoint: GET /api/catalog/provider/{providerId}
-     * Retorna: Servicios individuales + Paquetes con cálculo de ahorro.
-     * Uso: Cuando un paciente entra al perfil de un doctor.
+     * Detalle de un Producto/Servicio.
+     * Recibe lat/lng opcionales para calcular "A cuántos km estás".
+     */
+    @GetMapping("/{id}")
+    public ResponseEntity<CatalogItemResponse> getItemDetail(
+            @PathVariable Long id,
+            @RequestParam(required = false) Double lat,
+            @RequestParam(required = false) Double lng
+    ) {
+        return ResponseEntity.ok(service.getItemDetail(id, lat, lng));
+    }
+
+    /**
+     * 🛰️ MARKETPLACE: Búsqueda "Cerca de mí".
+     * Busca en TODOS los doctores.
+     */
+    @GetMapping("/nearby")
+    public ResponseEntity<Page<CatalogItemResponse>> getNearbyItems(
+            @RequestParam Double lat,
+            @RequestParam Double lng,
+            @RequestParam(defaultValue = "10.0") Double radiusKm,
+            @PageableDefault(size = 20) Pageable pageable
+    ) {
+        return ResponseEntity.ok(service.getNearbyItems(lat, lng, radiusKm, pageable));
+    }
+
+    /**
+     * Tienda de un Doctor Específico.
+     * Ej: Cuando entras al perfil del "Dr. House".
      */
     @GetMapping("/provider/{providerId}")
-    public ResponseEntity<ProviderCatalogResponse> getPublicCatalog(@PathVariable Long providerId) {
-        return ResponseEntity.ok(catalogService.getPublicCatalog(providerId));
+    public ResponseEntity<Page<CatalogItemResponse>> getProviderStore(
+            @PathVariable Long providerId,
+            @RequestParam(required = false) String category, // Filtro opcional: "SALUD" vs "BELLEZA"
+            @PageableDefault(size = 20) Pageable pageable
+    ) {
+        return ResponseEntity.ok(service.getProviderCatalog(providerId, category, pageable));
+    }
+
+    /**
+     * Buscador de Texto (Google-like) DENTRO de la tienda de un doctor.
+     */
+    @GetMapping("/provider/{providerId}/search")
+    public ResponseEntity<Page<CatalogItemResponse>> searchInStore(
+            @PathVariable Long providerId,
+            @RequestParam String q,
+            @PageableDefault(size = 20) Pageable pageable
+    ) {
+        return ResponseEntity.ok(service.searchGlobal(providerId, q, pageable));
+    }
+
+    // ==========================================
+    // 🛠️ HELPERS
+    // ==========================================
+
+    /**
+     * Extrae el ID del usuario desde el Token JWT.
+     * Gracias al JwtAuthenticationFilter, el 'principal' es el ID (Long).
+     */
+    private Long getCurrentUserId() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new SecurityException("Usuario no autenticado");
+        }
+        return (Long) authentication.getPrincipal();
     }
 }

@@ -46,7 +46,8 @@ import java.util.Set;
         @Index(name = "idx_providers_category_id", columnList = "category_id"), // Index FK
         @Index(name = "idx_providers_status", columnList = "status"),
         @Index(name = "idx_providers_slug", columnList = "slug"),
-        @Index(name = "idx_providers_onboarding_complete", columnList = "onboarding_complete")
+        @Index(name = "idx_providers_onboarding_complete", columnList = "onboarding_complete"),
+        @Index(name = "idx_providers_plan", columnList = "plan_id")
 })
 public class Provider extends BaseUser implements UserDetails {
 
@@ -92,6 +93,14 @@ public class Provider extends BaseUser implements UserDetails {
     @Enumerated(EnumType.STRING)
     @Column(name = "gender", length = 20)
     private Gender gender;
+
+    /**
+     * Vital para que el Token sepa si el usuario es confiable.
+     * Valores: "PENDING", "IN_REVIEW", "APPROVED", "REJECTED".
+     */
+    @Builder.Default
+    @Column(name = "kyc_status", length = 20)
+    private String kycStatus = "PENDING";
 
     // ========================================================================
     // 📍 UBICACIÓN
@@ -160,11 +169,11 @@ public class Provider extends BaseUser implements UserDetails {
     // Redefinirlo aquí causa errores de "Repeated column" en Hibernate.
 
     /**
-     * Paso actual del wizard.
-     * Ej: "SPECIALTY_SELECTION", "DOCUMENTS_UPLOAD".
+     * Esto facilita la consistencia con el Token JWT.
+     * Ej: "SPECIALTY_SELECTION", "DOCS_UPLOAD", "COMPLETED".
      */
-    @Column(name = "current_onboarding_step")
-    private String currentOnboardingStep;
+    @Column(name = "onboarding_status", length = 50)
+    private String onboardingStatus;
 
     /**
      * Aceptación de Términos y Condiciones.
@@ -181,8 +190,15 @@ public class Provider extends BaseUser implements UserDetails {
     // 💳 REFERENCIA A PLAN
     // ========================================================================
 
-    @Column(name = "current_plan_id")
-    private Long currentPlanId;
+    /**
+     * Antes: private Long currentPlanId;
+     * Ahora: Relación @ManyToOne con la entidad Plan.
+     * Razón: Permite a Auth Service acceder a las reglas del plan (provider.getPlan().getMaxProducts()).
+     * FetchType.EAGER: Porque SIEMPRE necesitamos el plan al hacer Login para generar el token.
+     */
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "plan_id")
+    private Plan plan;
 
     // ========================================================================
     // 🏷️ ETIQUETAS

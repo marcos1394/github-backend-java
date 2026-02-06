@@ -50,10 +50,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         jwt = authHeader.substring(7);
 
         try {
-            // 2. Parsear el Token y Verificar Firma (Base64)
+            // 2. Parsear el Token y Verificar Firma
             byte[] keyBytes = Decoders.BASE64.decode(secretKey);
             Key key = Keys.hmacShaKeyFor(keyBytes);
-            
+
             Claims claims = Jwts.parserBuilder()
                     .setSigningKey(key)
                     .build()
@@ -61,36 +61,37 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     .getBody();
 
             userEmail = claims.getSubject();
-            
-            // 3. Extraer ID y ROL de manera segura
+
+            // 3. Extraer ID y ROL
             Long userId = null;
             if (claims.get("id") != null) {
-                // Casteo seguro para evitar ClassCastException (Integer vs Long)
+                // Mantenemos este cast seguro, es vital.
                 userId = ((Number) claims.get("id")).longValue();
             }
-            
+
             String role = claims.get("role", String.class);
 
-            // 4. Establecer Autenticación en el Contexto
+            // 4. Establecer contexto de seguridad
             if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-                
-                List<SimpleGrantedAuthority> authorities = (role != null) 
-                        ? List.of(new SimpleGrantedAuthority("ROLE_" + role)) 
+
+                List<SimpleGrantedAuthority> authorities = (role != null)
+                        ? List.of(new SimpleGrantedAuthority("ROLE_" + role))
                         : Collections.emptyList();
 
-                // Creamos el token de Spring Security usando el ID del usuario como 'Principal'
+                // El principal es el userId, igual que en Onboarding
                 UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                        userId, // Guardamos el ID (Long) para usarlo en los Controllers
+                        userId,
                         null,
                         authorities
                 );
 
                 authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                
+
                 SecurityContextHolder.getContext().setAuthentication(authToken);
                 log.debug("✅ Usuario autenticado en Catalog Service: {}", userEmail);
             }
         } catch (Exception e) {
+            // Logueamos como WARN o ERROR para monitorear intentos fallidos
             log.error("❌ Error validando JWT en Catalog Service: {}", e.getMessage());
         }
 

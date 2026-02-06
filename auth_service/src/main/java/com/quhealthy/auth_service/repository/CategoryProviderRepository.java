@@ -10,6 +10,7 @@ import java.util.Optional;
 @Repository
 public interface CategoryProviderRepository extends JpaRepository<CategoryProvider, Long> {
 
+
     // ========================================================================
     // 🌍 BÚSQUEDAS PÚBLICAS (Frontend & Onboarding)
     // ========================================================================

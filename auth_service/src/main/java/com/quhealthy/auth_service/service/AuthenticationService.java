@@ -16,6 +16,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 @Slf4j
@@ -26,26 +28,24 @@ public class AuthenticationService {
     private final ConsumerRepository consumerRepository;
     private final ProviderRepository providerRepository;
     private final PasswordEncoder passwordEncoder;
-    private final JwtService jwtService; // Se creará en el siguiente paso
+    private final JwtService jwtService;
 
     /**
-     * Proceso de Login unificado.
-     * 1. Busca usuario en ambas tablas.
-     * 2. Valida credenciales.
-     * 3. Genera Token.
-     * 4. Calcula el estado (AuthStatus) para redirección en Frontend.
+     * Proceso de Login Unificado.
+     * Busca en ambas tablas (Provider/Consumer), valida password e inyecta
+     * la identidad completa (Plan, KYC, Onboarding) en el Token.
      */
     @Transactional(readOnly = true)
     public AuthResponse authenticate(LoginRequest request) {
         log.info("Intento de autenticación para: {}", request.getEmail());
 
-        // 1. Intentar buscar como CONSUMER
+        // 1. Intentar buscar como CONSUMER (Paciente)
         Optional<Consumer> consumerOpt = consumerRepository.findByEmail(request.getEmail());
         if (consumerOpt.isPresent()) {
             return authenticateConsumer(consumerOpt.get(), request.getPassword());
         }
 
-        // 2. Intentar buscar como PROVIDER
+        // 2. Intentar buscar como PROVIDER (Doctor/Especialista)
         Optional<Provider> providerOpt = providerRepository.findByEmail(request.getEmail());
         if (providerOpt.isPresent()) {
             return authenticateProvider(providerOpt.get(), request.getPassword());
@@ -63,16 +63,21 @@ public class AuthenticationService {
     private AuthResponse authenticateConsumer(Consumer consumer, String rawPassword) {
         validateCredentials(consumer, rawPassword);
 
-        String token = jwtService.generateToken(consumer);
-        // String refreshToken = jwtService.generateRefreshToken(consumer); // Futuro
+        // 1. Preparar Claims (Datos del Pasaporte Digital)
+        Map<String, Object> extraClaims = new HashMap<>();
+        extraClaims.put("id", consumer.getId());
+        extraClaims.put("role", "CONSUMER");
+        // Los consumers no tienen plan ni KYC complejo por ahora, así que no inyectamos esos campos.
 
-        // Construir Status para Consumer
-        // Nota: Los consumers suelen tener onboardingComplete=true y hasActivePlan=true por defecto
+        // 2. Generar Token
+        String token = jwtService.generateToken(extraClaims, consumer);
+
+        // 3. Construir Status para Frontend
         AuthResponse.AuthStatus status = AuthResponse.AuthStatus.builder()
                 .isEmailVerified(consumer.isEmailVerified())
                 .isPhoneVerified(consumer.isPhoneVerified())
-                .onboardingComplete(true) // Pacientes entran directo
-                .hasActivePlan(true)      // Pacientes no pagan membresía de uso
+                .onboardingComplete(true) // Pacientes siempre entran directo
+                .hasActivePlan(true)      // Siempre activo
                 .build();
 
         return AuthResponse.builder()
@@ -84,21 +89,39 @@ public class AuthenticationService {
     }
 
     // ========================================================================
-    // 🔒 LÓGICA ESPECÍFICA PROVIDER
+    // 🔒 LÓGICA ESPECÍFICA PROVIDER (AQUÍ ESTÁ LA MAGIA)
     // ========================================================================
 
     private AuthResponse authenticateProvider(Provider provider, String rawPassword) {
         validateCredentials(provider, rawPassword);
 
-        String token = jwtService.generateToken(provider);
-        // String refreshToken = jwtService.generateRefreshToken(provider); // Futuro
+        // 1. Preparar Claims (Single Source of Truth)
+        // Inyectamos todo lo que los demás microservicios necesitan saber para no consultar la BD.
+        Map<String, Object> extraClaims = new HashMap<>();
 
-        // Construir Status para Provider (Reglas de negocio estrictas)
+        extraClaims.put("id", provider.getId());
+        extraClaims.put("role", "PROVIDER");
+
+        // --- INYECCIÓN DEL PLAN ---
+        // Si el provider tiene plan asignado, usamos su ID. Si no (null), forzamos Plan Gratuito (5).
+        Long planId = (provider.getPlan() != null) ? provider.getPlan().getId() : 5L;
+        extraClaims.put("planId", planId);
+
+        // --- INYECCIÓN DE ESTADOS (Onboarding & KYC) ---
+        // Esto permite que el CatalogService bloquee si el KYC no está aprobado.
+        extraClaims.put("onboardingStatus", provider.getOnboardingStatus()); // Ej: "COMPLETED", "PROFILE_PENDING"
+        extraClaims.put("kycStatus", provider.getKycStatus());               // Ej: "APPROVED", "IN_REVIEW"
+
+        // 2. Generar Token Supervitaminado 💊
+        String token = jwtService.generateToken(extraClaims, provider);
+
+        // 3. Construir Status para Frontend (Ayuda a la UI a redirigir)
         AuthResponse.AuthStatus status = AuthResponse.AuthStatus.builder()
                 .isEmailVerified(provider.isEmailVerified())
                 .isPhoneVerified(provider.isPhoneVerified())
-                .onboardingComplete(provider.getOnboardingComplete()) // Vital para el Wizard
-                .hasActivePlan(provider.isHasActivePlan())            // Vital para bloqueo por pago
+                // Mapeamos el Enum/String interno a Boolean para el frontend simple
+                .onboardingComplete("COMPLETED".equals(provider.getOnboardingStatus()))
+                .hasActivePlan(provider.isHasActivePlan())
                 .build();
 
         return AuthResponse.builder()

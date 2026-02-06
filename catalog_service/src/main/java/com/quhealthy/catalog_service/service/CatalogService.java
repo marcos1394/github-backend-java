@@ -1,15 +1,12 @@
 package com.quhealthy.catalog_service.service;
 
-import com.quhealthy.catalog_service.dto.request.CreatePackageRequest;
-import com.quhealthy.catalog_service.dto.request.CreateServiceRequest;
-import com.quhealthy.catalog_service.dto.response.PackageResponse;
-import com.quhealthy.catalog_service.dto.response.ProviderCatalogResponse;
-import com.quhealthy.catalog_service.dto.response.ServiceResponse;
-import com.quhealthy.catalog_service.model.MedicalPackage;
-import com.quhealthy.catalog_service.model.MedicalService;
-import com.quhealthy.catalog_service.model.enums.ServiceStatus;
-import com.quhealthy.catalog_service.repository.MedicalPackageRepository;
-import com.quhealthy.catalog_service.repository.MedicalServiceRepository;
+import com.quhealthy.catalog_service.dto.CatalogItemRequest;
+import com.quhealthy.catalog_service.dto.CatalogItemResponse;
+import com.quhealthy.catalog_service.dto.CatalogItemSummary;
+import com.quhealthy.catalog_service.model.CatalogItem;
+import com.quhealthy.catalog_service.model.enums.ItemStatus;
+import com.quhealthy.catalog_service.model.enums.ItemType;
+import com.quhealthy.catalog_service.repository.CatalogItemRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -29,164 +27,256 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class CatalogService {
 
-    private final MedicalServiceRepository serviceRepository;
-    private final MedicalPackageRepository packageRepository;
+    private final CatalogItemRepository repository;
 
-    // TODO: Inyectar aquí el Feign Client del PaymentService en el futuro
-    // private final PaymentServiceClient paymentClient;
+    // ==========================================
+    // 🏭 1. CREACIÓN Y GESTIÓN (Provider)
+    // ==========================================
 
-    /**
-     * ✅ CREAR SERVICIO INDIVIDUAL
-     * Regla de Negocio: Validar límites del plan y duplicados.
-     */
     @Transactional
-    public ServiceResponse createService(Long providerId, CreateServiceRequest request) {
-        log.info("🏥 Creando servicio para Provider ID: {}", providerId);
+    public CatalogItemResponse createItem(Long providerId, CatalogItemRequest request) {
+        log.info("Creando ítem para provider {}: {}", providerId, request.getName());
 
-        // 1. Validar Límites del Plan (SaaS Logic)
-        checkSubscriptionLimits(providerId);
-
-        // 2. Evitar duplicados (Mismo nombre para el mismo doctor)
-        if (serviceRepository.existsByProviderIdAndNameIgnoreCase(providerId, request.getName())) {
-            throw new IllegalArgumentException("Ya tienes un servicio con el nombre: " + request.getName());
+        // 1. Validar Duplicados (Regla de Negocio)
+        if (repository.existsByProviderIdAndNameAndStatusNot(providerId, request.getName(), ItemStatus.ARCHIVED)) {
+            throw new IllegalArgumentException("Ya existe un servicio o producto activo con este nombre.");
         }
 
-        // 3. Crear Entidad
-        MedicalService service = MedicalService.builder()
+        // 2. Construir Entidad Base
+        CatalogItem item = CatalogItem.builder()
                 .providerId(providerId)
+                .type(request.getType())
                 .name(request.getName())
                 .description(request.getDescription())
+                .imageUrl(request.getImageUrl())
+                .category(request.getCategory())
                 .price(request.getPrice())
+                .compareAtPrice(request.getCompareAtPrice())
                 .currency(request.getCurrency())
-                .durationMinutes(request.getDurationMinutes())
-                .status(ServiceStatus.ACTIVE)
+                .taxRate(request.getTaxRate())
+                .status(request.getStatus() != null ? request.getStatus() : ItemStatus.ACTIVE)
+                // Geolocalización
+                .latitude(request.getLatitude())
+                .longitude(request.getLongitude())
+                .locationName(request.getLocationName())
+                // Innovación: AI Tags & Metadata
+                .searchTags(request.getSearchTags())
+                .metadata(request.getMetadata())
                 .build();
 
-        MedicalService saved = serviceRepository.save(service);
-        return mapToServiceResponse(saved);
-    }
+        // 3. Mapeo Específico por Tipo
+        mapTypeSpecificFields(item, request);
 
-    /**
-     * ✅ CREAR PAQUETE (COMBO)
-     * Regla de Negocio: Un paquete se compone de servicios existentes del MISMO doctor.
-     */
-    @Transactional
-    public PackageResponse createPackage(Long providerId, CreatePackageRequest request) {
-        log.info("🎁 Creando paquete para Provider ID: {}", providerId);
-
-        checkSubscriptionLimits(providerId);
-
-        // 1. Buscar los servicios solicitados y validar propiedad
-        List<MedicalService> services = serviceRepository.findAllByIdInAndProviderId(request.getServiceIds(), providerId);
-
-        // Si encontramos menos servicios de los que pidió, significa que envió IDs falsos o de otro doctor
-        if (services.size() != request.getServiceIds().size()) {
-            throw new IllegalArgumentException("Uno o más servicios no existen o no te pertenecen.");
+        // 4. Lógica de PAQUETES (Si aplica)
+        if (request.getType() == ItemType.PACKAGE && request.getPackageItemIds() != null) {
+            linkPackageItems(item, request.getPackageItemIds(), providerId);
         }
 
-        // 2. Crear Entidad Paquete
-        MedicalPackage medicalPackage = MedicalPackage.builder()
-                .providerId(providerId)
-                .name(request.getName())
-                .description(request.getDescription())
-                .price(request.getPrice()) // Precio con descuento definido por el doctor
-                .currency(request.getCurrency())
-                .status(ServiceStatus.ACTIVE)
-                .services(new HashSet<>(services))
-                .build();
-
-        MedicalPackage saved = packageRepository.save(medicalPackage);
-        return mapToPackageResponse(saved);
+        CatalogItem savedItem = repository.save(item);
+        return mapToResponse(savedItem, null, null); // Sin coordenadas de usuario al crear
     }
 
-    /**
-     * ✅ OBTENER CATÁLOGO PÚBLICO (Para el Perfil del Doctor)
-     * Regla de Negocio: Solo mostrar lo ACTIVE y calcular ahorros.
-     */
+    @Transactional
+    public CatalogItemResponse updateItem(Long providerId, Long itemId, CatalogItemRequest request) {
+        CatalogItem item = getOwnedItem(providerId, itemId);
+
+        // Actualizar campos básicos
+        item.setName(request.getName());
+        item.setDescription(request.getDescription());
+        item.setPrice(request.getPrice());
+        item.setCompareAtPrice(request.getCompareAtPrice());
+        item.setImageUrl(request.getImageUrl());
+        item.setStatus(request.getStatus());
+        item.setSearchTags(request.getSearchTags());
+        item.setMetadata(request.getMetadata());
+
+        // Actualizar Geo
+        item.setLatitude(request.getLatitude());
+        item.setLongitude(request.getLongitude());
+        item.setLocationName(request.getLocationName());
+
+        // Actualizar campos específicos
+        mapTypeSpecificFields(item, request);
+
+        // Actualizar Paquete (si cambiaron los items)
+        if (item.getType() == ItemType.PACKAGE && request.getPackageItemIds() != null) {
+            linkPackageItems(item, request.getPackageItemIds(), providerId);
+        }
+
+        return mapToResponse(repository.save(item), null, null);
+    }
+
+    @Transactional
+    public void deleteItem(Long providerId, Long itemId) {
+        CatalogItem item = getOwnedItem(providerId, itemId);
+        // Soft Delete (Enterprise Standard)
+        item.setStatus(ItemStatus.ARCHIVED);
+        repository.save(item);
+        log.info("Ítem {} archivado por provider {}", itemId, providerId);
+    }
+
+    // ==========================================
+    // 🔍 2. BÚSQUEDA Y DISCOVERY (Public/Patient)
+    // ==========================================
+
     @Transactional(readOnly = true)
-    public ProviderCatalogResponse getPublicCatalog(Long providerId) {
-        // 1. Obtener Servicios Sueltos
-        List<ServiceResponse> services = serviceRepository.findByProviderIdAndStatus(providerId, ServiceStatus.ACTIVE)
-                .stream()
-                .map(this::mapToServiceResponse)
-                .toList();
+    public CatalogItemResponse getItemDetail(Long itemId, Double userLat, Double userLng) {
+        CatalogItem item = repository.findById(itemId)
+                .orElseThrow(() -> new EntityNotFoundException("Ítem no encontrado"));
 
-        // 2. Obtener Paquetes
-        List<PackageResponse> packages = packageRepository.findByProviderIdAndStatus(providerId, ServiceStatus.ACTIVE)
-                .stream()
-                .map(this::mapToPackageResponse) // Aquí adentro se calcula el ahorro
-                .toList();
+        // Validar que no esté archivado (salvo que sea el dueño, pero aquí asumimos vista pública)
+        if (item.getStatus() == ItemStatus.ARCHIVED) {
+            throw new EntityNotFoundException("Este ítem ya no está disponible");
+        }
 
-        return ProviderCatalogResponse.builder()
-                .providerId(providerId)
-                .individualServices(services)
-                .packages(packages)
-                .build();
+        return mapToResponse(item, userLat, userLng);
     }
 
-    /**
-     * ✅ GESTIÓN INTERNA (Dashboard del Doctor)
-     * Ve todo (Activo, Inactivo, Archivado).
-     */
     @Transactional(readOnly = true)
-    public Page<ServiceResponse> getMyServices(Long providerId, Pageable pageable) {
-        return serviceRepository.findByProviderId(providerId, pageable)
-                .map(this::mapToServiceResponse);
+    public Page<CatalogItemResponse> getNearbyItems(Double lat, Double lng, Double radiusKm, Pageable pageable) {
+        // Usamos el Query Geoespacial de PostGIS
+        return repository.findNearbyItems(lat, lng, radiusKm, pageable)
+                .map(item -> mapToResponse(item, lat, lng));
     }
 
-    // =================================================================
-    // 🛡️ REGLAS DE NEGOCIO & UTILIDADES
-    // =================================================================
-
-    /**
-     * Placeholder para validación contra PaymentService.
-     * En el futuro, esto hará una llamada síncrona (Feign) o consultará Redis.
-     */
-    private void checkSubscriptionLimits(Long providerId) {
-        // TODO: Implementar lógica real.
-        // Ejemplo:
-        // SubscriptionPlan plan = paymentClient.getPlan(providerId);
-        // long currentServices = serviceRepository.countByProviderId(providerId);
-        // if (currentServices >= plan.getMaxServices()) {
-        //     throw new IllegalStateException("Has alcanzado el límite de servicios de tu plan actual. Actualiza a Pro.");
-        // }
-        log.debug("✅ (Mock) Verificando límites de plan para provider {}", providerId);
+    @Transactional(readOnly = true)
+    public Page<CatalogItemResponse> searchGlobal(Long providerId, String keyword, Pageable pageable) {
+        // Usamos el Query de Texto + Tags
+        return repository.searchActiveItems(providerId, keyword, pageable)
+                .map(item -> mapToResponse(item, null, null));
     }
 
-    // --- Mappers Manuales (Más rápido y seguro que ModelMapper) ---
+    @Transactional(readOnly = true)
+    public Page<CatalogItemResponse> getProviderCatalog(Long providerId, String category, Pageable pageable) {
+        if (category != null && !category.isEmpty()) {
+            return repository.findAllByProviderIdAndCategoryAndStatus(providerId, category, ItemStatus.ACTIVE, pageable)
+                    .map(item -> mapToResponse(item, null, null));
+        }
+        return repository.findAllByProviderIdAndStatus(providerId, ItemStatus.ACTIVE, pageable)
+                .map(item -> mapToResponse(item, null, null));
+    }
 
-    private ServiceResponse mapToServiceResponse(MedicalService s) {
-        return ServiceResponse.builder()
-                .id(s.getId())
-                .name(s.getName())
-                .description(s.getDescription())
-                .price(s.getPrice())
-                .currency(s.getCurrency())
-                .durationMinutes(s.getDurationMinutes())
-                .status(s.getStatus())
+    // ==========================================
+    // 🛠️ 3. MÉTODOS PRIVADOS (Helpers)
+    // ==========================================
+
+    private void mapTypeSpecificFields(CatalogItem item, CatalogItemRequest request) {
+        if (item.getType() == ItemType.SERVICE) {
+            item.setDurationMinutes(request.getDurationMinutes());
+            item.setModality(request.getModality());
+            // Limpiar campos de producto
+            item.setStockQuantity(null);
+            item.setSku(null);
+        } else if (item.getType() == ItemType.PRODUCT) {
+            item.setSku(request.getSku());
+            item.setStockQuantity(request.getStockQuantity());
+            item.setIsDigital(request.getIsDigital());
+            // Limpiar campos de servicio
+            item.setDurationMinutes(null);
+        }
+    }
+
+    private void linkPackageItems(CatalogItem packageItem, Set<Long> childIds, Long providerId) {
+        List<CatalogItem> children = repository.findAllById(childIds);
+
+        // Validar que todos los items pertenezcan al mismo provider (Seguridad)
+        boolean allBelongToProvider = children.stream().allMatch(c -> c.getProviderId().equals(providerId));
+        if (!allBelongToProvider) {
+            throw new SecurityException("No puedes agregar ítems que no te pertenecen al paquete.");
+        }
+
+        packageItem.setPackageItems(new HashSet<>(children));
+    }
+
+    private CatalogItem getOwnedItem(Long providerId, Long itemId) {
+        CatalogItem item = repository.findById(itemId)
+                .orElseThrow(() -> new EntityNotFoundException("Ítem no encontrado"));
+
+        if (!item.getProviderId().equals(providerId)) {
+            throw new SecurityException("No tienes permiso para modificar este ítem.");
+        }
+        return item;
+    }
+
+    // --- MAPPER MANUAL (Más rápido y controlado que MapStruct para lógica compleja) ---
+
+    private CatalogItemResponse mapToResponse(CatalogItem item, Double userLat, Double userLng) {
+
+        // 1. Calcular Distancia (si tenemos coordenadas del usuario)
+        Double distanceKm = null;
+        if (userLat != null && userLng != null && item.getLatitude() != null && item.getLongitude() != null) {
+            distanceKm = calculateDistanceKm(userLat, userLng, item.getLatitude(), item.getLongitude());
+        }
+
+        // 2. Calcular % Descuento (Marketing)
+        Integer discountPct = 0;
+        if (item.getCompareAtPrice() != null && item.getCompareAtPrice().compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal diff = item.getCompareAtPrice().subtract(item.getPrice());
+            // (Diff / CompareAt) * 100
+            if (diff.compareTo(BigDecimal.ZERO) > 0) {
+                discountPct = diff.divide(item.getCompareAtPrice(), 2, RoundingMode.HALF_UP)
+                        .multiply(new BigDecimal(100)).intValue();
+            }
+        }
+
+        // 3. Mapear Contenido del Paquete (Resumen)
+        Set<CatalogItemSummary> packageContents = null;
+        if (item.getType() == ItemType.PACKAGE && item.getPackageItems() != null) {
+            packageContents = item.getPackageItems().stream()
+                    .map(child -> CatalogItemSummary.builder()
+                            .id(child.getId())
+                            .name(child.getName())
+                            .type(child.getType())
+                            .imageUrl(child.getImageUrl())
+                            .price(child.getPrice())
+                            .category(child.getCategory())
+                            .build())
+                    .collect(Collectors.toSet());
+        }
+
+        return CatalogItemResponse.builder()
+                .id(item.getId())
+                .providerId(item.getProviderId())
+                .type(item.getType())
+                .name(item.getName())
+                .description(item.getDescription())
+                .imageUrl(item.getImageUrl())
+                .category(item.getCategory())
+                .price(item.getPrice())
+                .compareAtPrice(item.getCompareAtPrice())
+                .currency(item.getCurrency())
+                .discountPercentage(discountPct)
+                // Geo
+                .latitude(item.getLatitude())
+                .longitude(item.getLongitude())
+                .locationName(item.getLocationName())
+                .distanceKm(distanceKm)
+                // Específicos
+                .durationMinutes(item.getDurationMinutes())
+                .modality(item.getModality())
+                .sku(item.getSku())
+                .stockQuantity(item.getStockQuantity())
+                .isDigital(item.getIsDigital())
+                // Extras
+                .packageContents(packageContents)
+                .metadata(item.getMetadata())
+                .searchTags(item.getSearchTags())
+                .status(item.getStatus())
+                .createdAt(item.getCreatedAt())
+                .updatedAt(item.getUpdatedAt())
                 .build();
     }
 
-    private PackageResponse mapToPackageResponse(MedicalPackage p) {
-        // 1. Calcular valor real (Suma de precios individuales)
-        BigDecimal realValue = p.getServices().stream()
-                .map(MedicalService::getPrice)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        // 2. Calcular ahorro (Real - Precio Paquete)
-        // Si el paquete es más caro que la suma (raro), el ahorro es 0.
-        BigDecimal savings = realValue.subtract(p.getPrice()).max(BigDecimal.ZERO);
-
-        return PackageResponse.builder()
-                .id(p.getId())
-                .name(p.getName())
-                .description(p.getDescription())
-                .price(p.getPrice())
-                .currency(p.getCurrency())
-                .status(p.getStatus())
-                .services(p.getServices().stream().map(this::mapToServiceResponse).toList())
-                .realValue(realValue)
-                .savings(savings) // 👈 Dato clave para el Frontend ("Ahorras $500")
-                .build();
+    // Fórmula Haversine simple (Para display en DTO, la búsqueda real la hace PostGIS)
+    private Double calculateDistanceKm(double lat1, double lon1, double lat2, double lon2) {
+        final int R = 6371; // Radio Tierra km
+        double latDistance = Math.toRadians(lat2 - lat1);
+        double lonDistance = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        // Redondear a 1 decimal (ej: 5.2 km)
+        return BigDecimal.valueOf(R * c).setScale(1, RoundingMode.HALF_UP).doubleValue();
     }
 }
