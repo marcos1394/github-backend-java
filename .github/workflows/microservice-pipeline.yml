@@ -11,7 +11,6 @@ on:
         required: true
         type: string
         description: "Directorio dentro del monorepo (ej: auth_service)"
-      # ✅ DEFINICIÓN DEL INPUT (Esto ya lo tenías bien)
       flags:
         description: 'Flags adicionales para gcloud run deploy (ej: --service-account)'
         required: false
@@ -21,6 +20,14 @@ on:
         required: true
         type: string
         description: "Key del proyecto en SonarCloud"
+
+      # 👇 NUEVO INPUT: Para variables NO secretas (Tópicos, IDs, etc.)
+      extra_env_vars:
+        description: 'Variables de entorno NO secretas (KEY=VALUE) separadas por salto de línea'
+        required: false
+        type: string
+        default: ''
+
       env_secrets_mapping:
         required: true
         type: string
@@ -45,7 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Importante para Sonar
+          fetch-depth: 0
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -61,19 +68,19 @@ jobs:
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
 
-      # 🛡️ 1. Trivy SCA: Escaneo de dependencias (pom.xml)
+      # 🛡️ 1. Trivy SCA
       - name: Trivy Dependency Scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
           scan-ref: '${{ inputs.directory }}'
           format: 'table'
-          exit-code: '1' # Falla si hay criticas
+          exit-code: '1'
           ignore-unfixed: true
           vuln-type: 'library'
           severity: 'CRITICAL,HIGH'
 
-      # 📊 2. Tests Unitarios/Integración + Cobertura JaCoCo + SonarCloud
+      # 📊 2. Tests & SonarCloud
       - name: Test & Analyze
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -92,16 +99,16 @@ jobs:
   build-deploy:
     name: CD - Build & Deploy
     needs: quality-security
-    if: github.ref == 'refs/heads/main' # Solo despliega en rama Main
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
-      id-token: 'write' # Necesario para GCP Workload Identity
+      id-token: 'write'
 
     steps:
       - uses: actions/checkout@v4
 
-      # ☁️ 1. Autenticación Google Cloud (Sin JSON Key, usando OIDC)
+      # ☁️ 1. Auth GCP
       - id: 'auth'
         name: 'Authenticate to Google Cloud'
         uses: 'google-github-actions/auth@v2'
@@ -115,7 +122,7 @@ jobs:
       - name: Configure Docker
         run: gcloud auth configure-docker us-central1-docker.pkg.dev
 
-      # 🐳 2. Build Docker Image
+      # 🐳 2. Build
       - name: Build Docker Image
         run: |
           IMAGE_URI=us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/quhealthy-repo/${{ inputs.service_name }}:${{ github.sha }}
@@ -123,22 +130,22 @@ jobs:
           docker build -t $IMAGE_URI .
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      # 🛡️ 3. Trivy Container Scan: Escaneo de la imagen Docker (OS vulnerabilidades)
+      # 🛡️ 3. Container Scan
       - name: Trivy Container Scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.IMAGE_URI }}
           format: 'table'
-          exit-code: '1' # Falla si la imagen base es insegura
+          exit-code: '1'
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
 
-      # 🚀 4. Push Image
+      # 🚀 4. Push
       - name: Push Docker Image
         run: docker push ${{ env.IMAGE_URI }}
 
-      # ☁️ 5. Deploy to Cloud Run (Inyectando secretos de Secret Manager)
+      # ☁️ 5. Deploy Cloud Run
       - name: Deploy to Cloud Run
         uses: google-github-actions/deploy-cloudrun@v2
         with:
@@ -146,13 +153,14 @@ jobs:
           region: us-central1
           image: ${{ env.IMAGE_URI }}
 
-          # ✅ USO DEL FLAG (Esta era la línea faltante)
-          # Aquí es donde le pasamos "--service-account=..." al comando real
+          # Flags (Service Account)
           flags: ${{ inputs.flags }}
 
-          # Variables de entorno NO sensibles
+          # ✅ AQUÍ OCURRE LA MAGIA: Concatenamos fijas + extras
           env_vars: |
             SPRING_PROFILES_ACTIVE=prod
             SERVER_PORT=8080
-          # Mapeo de secretos (ENV_VAR=GCP_SECRET_NAME:VERSION)
+            ${{ inputs.extra_env_vars }}
+
+          # Secretos (GCP Secret Manager)
           secrets: ${{ inputs.env_secrets_mapping }}

@@ -22,11 +22,16 @@ jobs:
       service_name: notification-service
       directory: notification_service
       sonar_project_key: quhealthy-notification-service
+
+      # ✅ 1. Seguridad: Usar su propia identidad
       flags: '--service-account=sa-notification@quhealthy-backend.iam.gserviceaccount.com'
 
-      # 👇 MAPEO DE SECRETOS (Environment Variables -> GCP Secret Manager)
-      # Nota: Asumo que usas los mismos nombres de secretos en GCP que en Auth
-      # para DB, Twilio y Resend.
+      # ✅ 2. Configuración: Variables NO secretas
+      # GCP_PROJECT_ID es vital para que el Listener de Pub/Sub encuentre las suscripciones
+      extra_env_vars: |
+        GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+
+      # ✅ 3. Secretos (Mantenemos tu lista original)
       env_secrets_mapping: |
         DB_URL=application_db_url:latest
         DB_USER=application_db_user:latest
@@ -38,6 +43,7 @@ jobs:
         TWILIO_TOKEN=application_twilio_token:latest
         TWILIO_PHONE=application_twilio_phone:latest
         FIREBASE_CREDENTIALS=application_firebase_credentials:latest
+
     secrets:
       # Credenciales de infraestructura (GitHub Secrets)
       GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}

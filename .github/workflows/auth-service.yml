@@ -4,48 +4,48 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - 'auth_service/**'             # Solo si hay cambios en auth_service
+      - 'auth_service/**'
       - '.github/workflows/auth-service.yml'
   pull_request:
     paths:
       - 'auth_service/**'
 
-# 👇 AGREGA ESTE BLOQUE DE PERMISOS AQUÍ
 permissions:
-  contents: read        # Necesario para descargar el código
-  id-token: write       # OBLIGATORIO para autenticarse con Google Cloud (OIDC)
+  contents: read
+  id-token: write
 
 jobs:
   call-workflow:
-    # Llamamos al template que acabamos de crear
     uses: ./.github/workflows/microservice-pipeline.yml
     with:
       service_name: auth-service
       directory: auth_service
       sonar_project_key: quhealthy_auth_service
+
+      # ✅ 1. Seguridad: Usar su propia identidad
       flags: '--service-account=sa-auth@quhealthy-backend.iam.gserviceaccount.com'
 
-      # 👇 AQUÍ ESTÁ LA MAGIA DE LOS SECRETOS
-      # Formato: VARIABLE_EN_PROPERTIES=NOMBRE_SECRETO_GCP:latest
+      # ✅ 2. Configuración: Variables NO secretas (Standard para todos los micros)
+      # Definimos el Tópico aquí para no tenerlo hardcodeado en Java
+      extra_env_vars: |
+        GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+        GCP_PUBSUB_TOPIC_USER_EVENTS=user-events-topic
+
+      # ✅ 3. Secretos (Tu lista original)
       env_secrets_mapping: |
         DB_URL=application_db_url:latest
         DB_USER=application_db_user:latest
         DB_PASSWORD=application_db_password:latest
         JWT_SECRET=application_jwt_secret:latest
-        
         RESEND_API_KEY=application_resend_key:latest
         RESEND_FROM_EMAIL=RESEND_FROM_EMAIL:latest
-        
         TWILIO_SID=application_twilio_sid:latest
         TWILIO_TOKEN=application_twilio_token:latest
         TWILIO_PHONE=application_twilio_phone:latest
-        
         GOOGLE_CLIENT_ID=application_google_client_id:latest
-        
         STRIPE_API_KEY=application_stripe_key:latest
 
     secrets:
-      # Credenciales de infraestructura (GitHub Secrets)
       GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
       GCP_SA_EMAIL: ${{ secrets.GCP_SA_EMAIL }}
       GCP_WIF_PROVIDER: ${{ secrets.GCP_WIF_PROVIDER }}
