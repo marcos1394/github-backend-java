@@ -67,7 +67,7 @@ public class AuthenticationService {
         Map<String, Object> extraClaims = new HashMap<>();
         extraClaims.put("id", consumer.getId());
         extraClaims.put("role", "CONSUMER");
-        // Los consumers no tienen plan ni KYC complejo por ahora, así que no inyectamos esos campos.
+        // Los consumers no tienen plan ni KYC complejo por ahora.
 
         // 2. Generar Token
         String token = jwtService.generateToken(extraClaims, consumer);
@@ -96,7 +96,6 @@ public class AuthenticationService {
         validateCredentials(provider, rawPassword);
 
         // 1. Preparar Claims (Single Source of Truth)
-        // Inyectamos todo lo que los demás microservicios necesitan saber para no consultar la BD.
         Map<String, Object> extraClaims = new HashMap<>();
 
         extraClaims.put("id", provider.getId());
@@ -108,18 +107,16 @@ public class AuthenticationService {
         extraClaims.put("planId", planId);
 
         // --- INYECCIÓN DE ESTADOS (Onboarding & KYC) ---
-        // Esto permite que el CatalogService bloquee si el KYC no está aprobado.
-        extraClaims.put("onboardingStatus", provider.getOnboardingStatus()); // Ej: "COMPLETED", "PROFILE_PENDING"
-        extraClaims.put("kycStatus", provider.getKycStatus());               // Ej: "APPROVED", "IN_REVIEW"
+        extraClaims.put("onboardingStatus", provider.getOnboardingStatus());
+        extraClaims.put("kycStatus", provider.getKycStatus());
 
         // 2. Generar Token Supervitaminado 💊
         String token = jwtService.generateToken(extraClaims, provider);
 
-        // 3. Construir Status para Frontend (Ayuda a la UI a redirigir)
+        // 3. Construir Status para Frontend
         AuthResponse.AuthStatus status = AuthResponse.AuthStatus.builder()
                 .isEmailVerified(provider.isEmailVerified())
                 .isPhoneVerified(provider.isPhoneVerified())
-                // Mapeamos el Enum/String interno a Boolean para el frontend simple
                 .onboardingComplete("COMPLETED".equals(provider.getOnboardingStatus()))
                 .hasActivePlan(provider.isHasActivePlan())
                 .build();

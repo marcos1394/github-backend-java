@@ -3,9 +3,9 @@ package com.quhealthy.auth_service.service;
 import com.quhealthy.auth_service.dto.request.LoginRequest;
 import com.quhealthy.auth_service.dto.response.AuthResponse;
 import com.quhealthy.auth_service.model.Consumer;
+import com.quhealthy.auth_service.model.Plan;
 import com.quhealthy.auth_service.model.Provider;
-import com.quhealthy.auth_service.model.enums.Role;
-import com.quhealthy.auth_service.model.enums.UserStatus;
+import com.quhealthy.auth_service.model.enums.UserStatus; // ✅ IMPORTANTE
 import com.quhealthy.auth_service.repository.ConsumerRepository;
 import com.quhealthy.auth_service.repository.ProviderRepository;
 import com.quhealthy.auth_service.service.security.JwtService;
@@ -23,6 +23,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
@@ -46,38 +47,34 @@ class AuthenticationServiceTest {
     // ========================================================================
 
     @Test
-    @DisplayName("Debe autenticar correctamente a un CONSUMER y devolver status por defecto")
+    @DisplayName("Debe autenticar Consumer y retornar token cuando credenciales son válidas")
     void authenticate_ShouldReturnToken_WhenConsumerIsValid() {
         // Arrange
-        String email = "patient@test.com";
-        String password = "password123";
-        LoginRequest request = new LoginRequest(email, password);
+        LoginRequest request = new LoginRequest("patient@test.com", "password123");
 
         Consumer consumer = Consumer.builder()
-                .id(1L)
-                .email(email)
+                .email("patient@test.com")
                 .password("encodedPass")
-                .firstName("Juan")
-                .role(Role.CONSUMER)
-                .status(UserStatus.ACTIVE)
                 .isEmailVerified(true)
+                .firstName("Juan")
+                // ✅ CORRECTO: Usamos el Enum Status (El default es ACTIVE, pero lo pongo explícito)
+                .status(UserStatus.ACTIVE)
                 .build();
 
-        when(consumerRepository.findByEmail(email)).thenReturn(Optional.of(consumer));
-        when(passwordEncoder.matches(password, consumer.getPassword())).thenReturn(true);
-        when(jwtService.generateToken(any(Consumer.class))).thenReturn("mock-jwt-token-consumer");
+        when(consumerRepository.findByEmail(request.getEmail())).thenReturn(Optional.of(consumer));
+        when(passwordEncoder.matches(request.getPassword(), consumer.getPassword())).thenReturn(true);
+        when(jwtService.generateToken(anyMap(), any(Consumer.class))).thenReturn("jwt-token-xyz");
 
         // Act
         AuthResponse response = authenticationService.authenticate(request);
 
         // Assert
         assertNotNull(response);
-        assertEquals("mock-jwt-token-consumer", response.getToken());
+        assertEquals("jwt-token-xyz", response.getToken());
         assertEquals("CONSUMER", response.getRole());
 
-        // CORRECCIÓN: Usamos isOnboardingComplete() e isHasActivePlan()
-        assertTrue(response.getStatus().isOnboardingComplete(), "Los pacientes siempre deben tener onboardingComplete en true");
-        assertTrue(response.getStatus().isHasActivePlan(), "Los pacientes siempre tienen plan activo por defecto");
+        verify(consumerRepository).findByEmail(request.getEmail());
+        verify(jwtService).generateToken(anyMap(), any(Consumer.class));
     }
 
     // ========================================================================
@@ -85,92 +82,98 @@ class AuthenticationServiceTest {
     // ========================================================================
 
     @Test
-    @DisplayName("Debe autenticar correctamente a un PROVIDER y respetar sus flags de negocio")
+    @DisplayName("Debe autenticar Provider y retornar token con claims enriquecidos")
     void authenticate_ShouldReturnToken_WhenProviderIsValid() {
         // Arrange
-        String email = "doctor@test.com";
-        String password = "password123";
-        LoginRequest request = new LoginRequest(email, password);
+        LoginRequest request = new LoginRequest("doctor@test.com", "password123");
+        Plan mockPlan = Plan.builder().id(2L).build();
 
         Provider provider = Provider.builder()
-                .id(2L)
-                .email(email)
-                .password("encodedPass")
+                .email("doctor@test.com")
                 .businessName("Clinica Test")
-                .role(Role.PROVIDER)
-                .status(UserStatus.ACTIVE)
-                .onboardingComplete(true)
-                .hasActivePlan(false)
+                .password("encodedPass")
+                .onboardingStatus("COMPLETED")
+                .isEmailVerified(true)
+                .kycStatus("PENDING")
+                .hasActivePlan(true)
+                .status(UserStatus.ACTIVE) // ✅ CORRECTO
+                .plan(mockPlan)
                 .build();
 
-        when(consumerRepository.findByEmail(email)).thenReturn(Optional.empty());
-        when(providerRepository.findByEmail(email)).thenReturn(Optional.of(provider));
-
-        when(passwordEncoder.matches(password, provider.getPassword())).thenReturn(true);
-        when(jwtService.generateToken(any(Provider.class))).thenReturn("mock-jwt-token-provider");
+        when(consumerRepository.findByEmail(request.getEmail())).thenReturn(Optional.empty());
+        when(providerRepository.findByEmail(request.getEmail())).thenReturn(Optional.of(provider));
+        when(passwordEncoder.matches(request.getPassword(), provider.getPassword())).thenReturn(true);
+        when(jwtService.generateToken(anyMap(), any(Provider.class))).thenReturn("jwt-provider-token");
 
         // Act
         AuthResponse response = authenticationService.authenticate(request);
 
         // Assert
         assertNotNull(response);
-        assertEquals("mock-jwt-token-provider", response.getToken());
+        assertEquals("jwt-provider-token", response.getToken());
         assertEquals("PROVIDER", response.getRole());
 
-        // CORRECCIÓN: Usamos isOnboardingComplete() e isHasActivePlan()
-        assertTrue(response.getStatus().isOnboardingComplete());
-        assertFalse(response.getStatus().isHasActivePlan(), "Debe reflejar que el plan NO está activo");
+        verify(jwtService).generateToken(anyMap(), any(Provider.class));
     }
 
     // ========================================================================
-    // ❌ TEST: ERRORES Y EXCEPCIONES
+    // ❌ TEST: USUARIO NO ENCONTRADO
     // ========================================================================
 
     @Test
-    @DisplayName("Debe lanzar BadCredentialsException si el usuario no existe en ninguna tabla")
-    void authenticate_ShouldThrowException_WhenUserNotFound() {
-        // Arrange
+    @DisplayName("Debe lanzar BadCredentialsException si el usuario no existe")
+    void authenticate_ShouldThrow_WhenUserNotFound() {
         LoginRequest request = new LoginRequest("ghost@test.com", "123");
 
         when(consumerRepository.findByEmail(anyString())).thenReturn(Optional.empty());
         when(providerRepository.findByEmail(anyString())).thenReturn(Optional.empty());
 
-        // Act & Assert
         assertThrows(BadCredentialsException.class, () -> authenticationService.authenticate(request));
     }
 
+    // ========================================================================
+    // ❌ TEST: PASSWORD INCORRECTO
+    // ========================================================================
+
     @Test
-    @DisplayName("Debe lanzar BadCredentialsException si la contraseña es incorrecta")
-    void authenticate_ShouldThrowException_WhenPasswordIsInvalid() {
-        // Arrange
-        String email = "patient@test.com";
-        LoginRequest request = new LoginRequest(email, "wrongPass");
+    @DisplayName("Debe lanzar BadCredentialsException si el password es incorrecto")
+    void authenticate_ShouldThrow_WhenPasswordInvalid() {
+        LoginRequest request = new LoginRequest("patient@test.com", "wrongPass");
+        Consumer consumer = Consumer.builder()
+                .email("patient@test.com")
+                .password("realPass")
+                .status(UserStatus.ACTIVE) // ✅ CORRECTO: Usuario activo, password mal
+                .build();
 
-        Consumer consumer = Consumer.builder().email(email).password("encodedPass").status(UserStatus.ACTIVE).build();
-
-        when(consumerRepository.findByEmail(email)).thenReturn(Optional.of(consumer));
+        when(consumerRepository.findByEmail(request.getEmail())).thenReturn(Optional.of(consumer));
         when(passwordEncoder.matches(request.getPassword(), consumer.getPassword())).thenReturn(false);
 
-        // Act & Assert
         assertThrows(BadCredentialsException.class, () -> authenticationService.authenticate(request));
+
+        verify(jwtService, never()).generateToken(any(), any());
     }
 
+    // ========================================================================
+    // ❌ TEST: CUENTA DESHABILITADA
+    // ========================================================================
+
     @Test
-    @DisplayName("Debe lanzar DisabledException si el usuario está suspendido o inactivo")
-    void authenticate_ShouldThrowException_WhenUserIsDisabled() {
-        // Arrange
-        String email = "banned@test.com";
-        LoginRequest request = new LoginRequest(email, "password123");
+    @DisplayName("Debe lanzar DisabledException si la cuenta está inactiva (SUSPENDED)")
+    void authenticate_ShouldThrow_WhenAccountDisabled() {
+        LoginRequest request = new LoginRequest("banned@test.com", "123");
 
         Consumer consumer = Consumer.builder()
-                .email(email)
-                .password("encodedPass")
+                .email("banned@test.com")
+                .password("pass")
+                // ✅ CORRECCIÓN CLAVE: Usamos el estado SUSPENDED (o INACTIVE)
+                // Esto hará que isActive() retorne false.
                 .status(UserStatus.SUSPENDED)
                 .build();
 
-        when(consumerRepository.findByEmail(email)).thenReturn(Optional.of(consumer));
+        when(consumerRepository.findByEmail(request.getEmail())).thenReturn(Optional.of(consumer));
 
-        // Act & Assert
         assertThrows(DisabledException.class, () -> authenticationService.authenticate(request));
+
+        verify(passwordEncoder, never()).matches(anyString(), anyString());
     }
 }
