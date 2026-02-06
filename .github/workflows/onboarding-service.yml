@@ -32,6 +32,8 @@ jobs:
         JWT_SECRET_KEY=application_jwt_secret:latest
         GOOGLE_MAPS_API_KEY=application_google_maps_key:latest
         GEMINI_API_KEY=google-ai-api-key:latest
+        GCP_PUBSUB_TOPIC_ONBOARDING_EVENTS=onboarding-events
+
 
     secrets:
       # Credenciales de infraestructura (GitHub Secrets)
