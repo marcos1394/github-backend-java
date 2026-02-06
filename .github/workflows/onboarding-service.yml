@@ -1,0 +1,42 @@
+name: Onboarding Service Pipeline 🚀
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'onboarding_service/**'     # 👈 Solo si hay cambios en onboarding
+      - '.github/workflows/onboarding-service.yml'
+  pull_request:
+    paths:
+      - 'onboarding_service/**'
+
+# PERMISOS PARA GCP (OIDC - Workload Identity Federation)
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  call-workflow:
+    uses: ./.github/workflows/microservice-pipeline.yml
+    with:
+      service_name: onboarding-service
+      directory: onboarding_service
+      # Asegúrate de crear este proyecto en SonarQube o que se cree automático
+      sonar_project_key: quhealthy-onboarding-service
+
+      # 👇 MAPEO DE SECRETOS (Environment Variables -> GCP Secret Manager)
+      # Formato: NOMBRE_VAR_EN_APP_YML = nombre_secreto_en_gcp:versión
+      env_secrets_mapping: |
+        DB_URL=application_db_url:latest
+        DB_USER=application_db_user:latest
+        DB_PASSWORD=application_db_password:latest
+        JWT_SECRET_KEY=application_jwt_secret:latest
+        GOOGLE_MAPS_API_KEY=application_google_maps_key:latest
+        GEMINI_API_KEY=google-ai-api-key:latest
+
+    secrets:
+      # Credenciales de infraestructura (GitHub Secrets)
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_SA_EMAIL: ${{ secrets.GCP_SA_EMAIL }}
+      GCP_WIF_PROVIDER: ${{ secrets.GCP_WIF_PROVIDER }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

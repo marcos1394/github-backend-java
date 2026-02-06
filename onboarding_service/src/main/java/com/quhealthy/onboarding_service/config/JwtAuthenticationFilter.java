@@ -1,25 +1,34 @@
 package com.quhealthy.onboarding_service.config;
 
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.io.Decoders;
+import io.jsonwebtoken.security.Keys;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.security.Key;
 import java.util.Collections;
+import java.util.List;
 
+@Slf4j
 @Component
-@RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
-    private final JwtConfig jwtConfig;
+    @Value("${application.security.jwt.secret-key}")
+    private String secretKey;
 
     @Override
     protected void doFilterInternal(
@@ -30,9 +39,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         final String authHeader = request.getHeader("Authorization");
         final String jwt;
-        final String userEmailOrId;
+        final String userEmail;
 
-        // 1. Validar Header
+        // 1. Validar cabecera Authorization
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             filterChain.doFilter(request, response);
             return;
@@ -40,31 +49,51 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         jwt = authHeader.substring(7);
 
-        // 2. Extraer ID/Email del Token
         try {
-            userEmailOrId = jwtConfig.extractUsername(jwt); // Esto devuelve el 'sub' del token
+            // 2. Parsear el Token y Verificar Firma (Base64)
+            byte[] keyBytes = Decoders.BASE64.decode(secretKey);
+            Key key = Keys.hmacShaKeyFor(keyBytes);
 
-            // 3. Validar Token (Firma y Expiración)
-            if (userEmailOrId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-                if (jwtConfig.isTokenValid(jwt)) {
-                    
-                    // 4. Crear Authentication Token (SIN ir a base de datos)
-                    // Usamos una lista vacía de autoridades por ahora, o podrías extraer roles del token si los pusiste ahí.
-                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                            userEmailOrId, // Principal (Aquí guardamos el ID o Email)
-                            null,
-                            Collections.emptyList() // Authorities (Roles)
-                    );
+            Claims claims = Jwts.parserBuilder()
+                    .setSigningKey(key)
+                    .build()
+                    .parseClaimsJws(jwt)
+                    .getBody();
 
-                    authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                    
-                    // 5. Inyectar en Contexto de Spring Security
-                    SecurityContextHolder.getContext().setAuthentication(authToken);
-                }
+            userEmail = claims.getSubject();
+
+            // 3. Extraer ID y ROL de manera segura
+            // IMPORTANTE: Este ID es vital para ligar el perfil de onboarding con el usuario autenticado
+            Long userId = null;
+            if (claims.get("id") != null) {
+                // Casteo seguro para evitar ClassCastException (Integer vs Long)
+                userId = ((Number) claims.get("id")).longValue();
+            }
+
+            String role = claims.get("role", String.class);
+
+            // 4. Establecer Autenticación en el Contexto de Spring Security
+            if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+
+                List<SimpleGrantedAuthority> authorities = (role != null)
+                        ? List.of(new SimpleGrantedAuthority("ROLE_" + role))
+                        : Collections.emptyList();
+
+                // Creamos el token de autenticación
+                // El 'principal' es el userId (Long), no el email. Esto facilita el uso en Controllers.
+                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                        userId,
+                        null,
+                        authorities
+                );
+
+                authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+
+                SecurityContextHolder.getContext().setAuthentication(authToken);
+                log.debug("✅ Usuario autenticado en Onboarding Service: {}", userEmail);
             }
         } catch (Exception e) {
-            // Token inválido o expirado -> No autenticamos, dejamos pasar para que SecurityFilterChain lance 403
-            System.err.println("Error procesando JWT en Onboarding: " + e.getMessage());
+            log.error("❌ Error validando JWT en Onboarding Service: {}", e.getMessage());
         }
 
         filterChain.doFilter(request, response);

@@ -3,7 +3,6 @@ package com.quhealthy.onboarding_service.config;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -26,39 +25,43 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            .csrf(AbstractHttpConfigurer::disable)
-            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-            
-            // Reglas de Autorización
-            .authorizeHttpRequests(auth -> auth
-                // Endpoints Públicos (Health Checks, Docs)
-                .requestMatchers("/actuator/**").permitAll()
-                .requestMatchers("/v3/api-docs/**", "/swagger-ui/**").permitAll()
-                
-                // Endpoints de Onboarding:
-                // Catálogo de Tags -> Podría ser público o privado, tú decides.
-                // Aquí lo dejamos público para probar fácil, pero idealmente requiere token.
-                // .requestMatchers(HttpMethod.GET, "/api/onboarding/tags/catalog").permitAll()
-                
-                // TODO LO DEMÁS -> PRIVADO (Requiere Token)
-                .anyRequest().authenticated()
-            )
-            
-            .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            
-            // Filtro JWT
-            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                .csrf(AbstractHttpConfigurer::disable)
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .authorizeHttpRequests(auth -> auth
+                        // 🔓 PUBLICO: Health Checks
+                        .requestMatchers("/actuator/**").permitAll()
+
+                        // 🔓 PUBLICO: Swagger
+                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+
+                        // 🔓 PUBLICO: Webhooks de KYC (Truora/Mati/Stripe)
+                        // El proveedor externo nos llamará aquí. Validaremos la seguridad en el Controller (Signature check).
+                        .requestMatchers("/api/webhooks/kyc/**").permitAll()
+
+                        // 🔒 PROTEGIDO: Onboarding General
+                        .requestMatchers("/api/onboarding/**").authenticated()
+
+                        // 🔒 PROTEGIDO: Proxy de Google (Maps/Places/Business)
+                        // El Frontend llama a nuestro Backend -> Backend llama a Google
+                        // Así ocultamos la API Key de Google del navegador.
+                        .requestMatchers("/api/google/**").authenticated()
+
+                        .anyRequest().authenticated()
+                )
+                .sessionManagement(session -> session
+                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                )
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
 
-    // Configuración CORS (Idéntica a Auth Service)
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:3000", "https://quhealthy.com"));
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("*"));
+        configuration.setAllowedOrigins(List.of("http://localhost:3000", "https://quhealthy.org", "https://www.quhealthy.org"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin", "Access-Control-Request-Method", "Access-Control-Request-Headers"));
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

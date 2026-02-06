@@ -1,0 +1,92 @@
+# =============================================================================
+# 🧪 CONFIGURACIÓN DE TEST (Aislada)
+# Ruta: src/test/resources/application-test.yml
+# =============================================================================
+
+server:
+  # Puerto aleatorio (-1 o 0) para evitar choques de puertos en Jenkins/GitHub Actions
+  port: -1
+
+spring:
+  application:
+    name: onboarding-service-test
+
+  # 🔥 VITAL: PERMITE SOBRESCRIBIR BEANS
+  # Esto soluciona el error "A bean with that name has already been defined"
+  # permitiendo que TestConfig reemplace los servicios reales con Mocks.
+  main:
+    allow-bean-definition-overriding: true
+
+  # BASE DE DATOS (Gestionada por Testcontainers)
+  # Estos valores son "dummy" para que Spring arranque.
+  # Testcontainers inyectará la URL real de Docker dinámicamente.
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://localhost:5432/test_db
+    username: test
+    password: test
+
+  # JPA / HIBERNATE
+  jpa:
+    # create-drop: Borra la BD al terminar cada test (limpieza total)
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+  # MOCKS Y APAGADO DE NUBE (Spring Cloud GCP)
+  cloud:
+    gcp:
+      project-id: test-project
+      pubsub:
+        enabled: false # Apagamos el intento de conexión real a PubSub
+      credentials:
+        # Apunta a un archivo inexistente para forzar fallo si intenta conectarse de verdad
+        location: classpath:non-existent-credentials.json
+
+# SEGURIDAD (Valores Dummy)
+application:
+  security:
+    jwt:
+      # Clave larga para cumplir con HMAC-SHA256
+      secret-key: test-secret-key-must-be-very-long-for-hmac-sha-algorithm-at-least-256-bits
+
+# GOOGLE MAPS (Mockeado en TestConfig)
+google:
+  maps:
+    api-key: dummy_maps_key
+    region: mx
+
+# GEMINI AI (Mockeado en TestConfig)
+gemini:
+  api-key: dummy_gemini_key
+  project-id: test-project
+  location: us-central1
+  model: gemini-3-flash-preview
+
+# STORAGE STRATEGY
+storage:
+  provider: minio
+
+# MINIO CONFIG (Valores Dummy)
+minio:
+  url: http://localhost:9000
+  access-key: test-access
+  secret-key: test-secret
+  bucket-name: test-bucket
+
+# GCP CONFIG PERSONALIZADA (Valores Dummy para evitar errores de placeholder)
+gcp:
+  bucket-name: test-bucket-gcp
+  pubsub:
+    topic:
+      onboarding: test-onboarding-topic
+
+# LOGGING
+logging:
+  level:
+    root: INFO
+    com.quhealthy: DEBUG
+    org.springframework.boot: DEBUG

@@ -1,0 +1,90 @@
+server:
+  port: ${PORT:8081}
+
+spring:
+  application:
+    name: onboarding-service
+
+  # BASE DE DATOS (Produccion: Cloud SQL)
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  # JPA / HIBERNATE
+  jpa:
+    open-in-view: false
+    show-sql: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 20
+        format_sql: false
+
+  # FORMATO DE FECHAS
+  jackson:
+    date-format: yyyy-MM-dd'T'HH:mm:ss
+    time-zone: UTC
+
+  # UPLOAD DE ARCHIVOS (Tamano maximo)
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+  # GOOGLE CLOUD (Pub/Sub) - MOVIDO AQUÍ DENTRO
+  cloud:
+    gcp:
+      project-id: ${GCP_PROJECT_ID}
+      pubsub:
+        enabled: true
+
+# SEGURIDAD
+application:
+  security:
+    jwt:
+      secret-key: ${JWT_SECRET_KEY}
+
+# CONFIGURACIÓN CUSTOM GCP (Unificada)
+gcp:
+  pubsub:
+    topic:
+      onboarding: ${PUBSUB_TOPIC_ONBOARDING:onboarding-events-topic}
+  bucket-name: ${GCP_BUCKET_NAME:quhealthy-kyc-docs-prod}
+
+# GOOGLE MAPS & PLACES
+google:
+  maps:
+    api-key: ${GOOGLE_MAPS_API_KEY}
+    region: mx
+
+# GEMINI AI (KYC)
+gemini:
+  api-key: ${GEMINI_API_KEY}
+  project-id: ${GCP_PROJECT_ID}
+  location: us-central1
+  model: gemini-3-flash-preview
+
+# STORAGE STRATEGY (Pattern Strategy)
+storage:
+  provider: ${STORAGE_PROVIDER:gcp}
+
+# Config MinIO (Valores por defecto vacios, se llenan en perfil local)
+minio:
+  url: ${MINIO_URL:http://minio:9000}
+  access-key: ${MINIO_ACCESS_KEY}
+  secret-key: ${MINIO_SECRET_KEY}
+  bucket-name: ${MINIO_BUCKET_NAME}
+
+# ACTUATOR (Health Checks)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always

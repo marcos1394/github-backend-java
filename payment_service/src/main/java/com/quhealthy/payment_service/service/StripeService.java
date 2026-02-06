@@ -4,6 +4,10 @@ import com.stripe.exception.*;
 import com.stripe.model.Invoice;
 // Importamos solo la Session de Checkout
 import com.stripe.model.checkout.Session;
+import com.stripe.model.Customer;
+import com.stripe.model.Subscription;
+import com.stripe.param.CustomerCreateParams;
+import com.stripe.param.SubscriptionCreateParams;
 import com.stripe.net.RequestOptions;
 import com.stripe.param.SubscriptionResumeParams;
 import com.stripe.param.SubscriptionUpdateParams;
@@ -29,10 +33,10 @@ public class StripeService {
      * 3. Soporte para Periodos de Prueba (Trials).
      * 4. Metadata para Webhooks.
      */
-    public Session createSubscriptionCheckout(Long providerId, String userEmail, String priceId, 
-                                              String successUrl, String cancelUrl, 
+    public Session createSubscriptionCheckout(Long providerId, String userEmail, String priceId,
+                                              String successUrl, String cancelUrl,
                                               String existingCustomerId, Integer trialDays) {
-        
+
         // 1. Idempotencia: Generamos una clave única para esta transacción
         String idempotencyKey = UUID.randomUUID().toString();
         RequestOptions options = RequestOptions.builder()
@@ -52,22 +56,22 @@ public class StripeService {
             SessionCreateParams.Builder paramsBuilder = SessionCreateParams.builder()
                     // Modo Suscripción (Recurrente)
                     .setMode(SessionCreateParams.Mode.SUBSCRIPTION)
-                    
+
                     // URLs de retorno
                     .setSuccessUrl(successUrl)
                     .setCancelUrl(cancelUrl)
 
                     .setClientReferenceId(String.valueOf(providerId))
-                    
+
                     // Permitir que el usuario ponga cupones de descuento si tiene uno
-                    .setAllowPromotionCodes(true) 
-                    
+                    .setAllowPromotionCodes(true)
+
                     // ============================================================
                     // 🌍 PUNTO 1: GESTIÓN FISCAL AUTOMÁTICA (STRIPE TAX)
                     // ============================================================
                     .setAutomaticTax(
                             SessionCreateParams.AutomaticTax.builder()
-                                    .setEnabled(true) 
+                                    .setEnabled(true)
                                     .build()
                     )
                     // Obligamos a recolectar la dirección del cliente para saber qué impuesto aplicar
@@ -76,16 +80,16 @@ public class StripeService {
 
                     // Inyectamos la metadata a la sesión
                     .putAllMetadata(metadata)
-                    
+
                     // Configuración específica de la suscripción
                     .setSubscriptionData(
                             SessionCreateParams.SubscriptionData.builder()
-                                    .putAllMetadata(metadata) 
+                                    .putAllMetadata(metadata)
                                     // ⏳ PUNTO 2: PERIODOS DE PRUEBA (TRIAL)
                                     .setTrialPeriodDays(trialDays != null && trialDays > 0 ? Long.valueOf(trialDays) : null)
                                     .build()
                     )
-                    
+
                     // El Producto a comprar (El Plan)
                     .addLineItem(
                             SessionCreateParams.LineItem.builder()
@@ -98,7 +102,7 @@ public class StripeService {
             if (existingCustomerId != null && !existingCustomerId.isBlank()) {
                 log.debug("🔄 Cliente recurrente detectado: {}", existingCustomerId);
                 paramsBuilder.setCustomer(existingCustomerId);
-                
+
                 // Si es cliente viejo, permitimos que actualice su dirección
                 paramsBuilder.setCustomerUpdate(
                         SessionCreateParams.CustomerUpdate.builder()
@@ -113,7 +117,7 @@ public class StripeService {
 
             // 5. Llamada final a Stripe
             Session session = Session.create(paramsBuilder.build(), options);
-            
+
             log.info("✅ Sesión creada exitosamente: {}", session.getId());
             return session;
 
@@ -135,16 +139,16 @@ public class StripeService {
 
         try {
             // Usamos ruta completa para diferenciarlo de SessionCreateParams de Checkout
-            com.stripe.param.billingportal.SessionCreateParams params = 
+            com.stripe.param.billingportal.SessionCreateParams params =
                 com.stripe.param.billingportal.SessionCreateParams.builder()
                     .setCustomer(externalCustomerId)
                     .setReturnUrl(returnUrl)
                     .build();
 
             // Usamos ruta completa para diferenciarlo de Session de Checkout
-            com.stripe.model.billingportal.Session portalSession = 
+            com.stripe.model.billingportal.Session portalSession =
                 com.stripe.model.billingportal.Session.create(params);
-            
+
             return portalSession.getUrl();
 
         } catch (StripeException e) {
@@ -207,7 +211,7 @@ public class StripeService {
     public void cancelSubscriptionAtPeriodEnd(String subscriptionId) {
         try {
             com.stripe.model.Subscription subscription = com.stripe.model.Subscription.retrieve(subscriptionId);
-            
+
             SubscriptionUpdateParams params = SubscriptionUpdateParams.builder()
                     .setCancelAtPeriodEnd(true) // 👈 La clave para no cortar el servicio hoy
                     .build();
@@ -227,13 +231,13 @@ public class StripeService {
     public void resumeSubscription(String subscriptionId) {
         try {
             com.stripe.model.Subscription subscription = com.stripe.model.Subscription.retrieve(subscriptionId);
-            
+
             // Verificamos si realmente se puede resumir
             if (Boolean.TRUE.equals(subscription.getCancelAtPeriodEnd())) {
                 SubscriptionResumeParams params = SubscriptionResumeParams.builder()
                         .setBillingCycleAnchor(SubscriptionResumeParams.BillingCycleAnchor.UNCHANGED) // Mantiene la fecha de cobro original
                         .build();
-                
+
                 subscription.resume(params);
                 log.info("♻️ Suscripción {} reactivada exitosamente.", subscriptionId);
             } else {
@@ -252,13 +256,13 @@ public class StripeService {
     public String getLatestInvoiceUrl(String subscriptionId) {
         try {
             com.stripe.model.Subscription subscription = com.stripe.model.Subscription.retrieve(subscriptionId);
-            
+
             String latestInvoiceId = subscription.getLatestInvoice();
             if (latestInvoiceId == null) return null;
 
             Invoice invoice = Invoice.retrieve(latestInvoiceId);
-            return invoice.getInvoicePdf(); 
-            
+            return invoice.getInvoicePdf();
+
         } catch (StripeException e) {
             log.error("❌ Error obteniendo factura: {}", e.getMessage());
             return null; // No rompemos el flujo si falla esto
@@ -275,6 +279,54 @@ public class StripeService {
         } catch (StripeException e) {
             log.error("❌ Error recuperando suscripción de Stripe: {}", e.getMessage());
             throw new RuntimeException("No se pudo sincronizar con Stripe.");
+        }
+    }
+
+    // ==========================================
+    // ⚙️ MÉTODOS BACKEND (API DIRECTA)
+    // ==========================================
+
+    /**
+     * Crea un Customer en Stripe sin pedir tarjeta.
+     * Se usa al momento del registro del usuario.
+     */
+    public Customer createCustomer(String email, String name, Long providerId) {
+        try {
+            CustomerCreateParams params = CustomerCreateParams.builder()
+                    .setEmail(email)
+                    .setName(name)
+                    .putMetadata("provider_id", String.valueOf(providerId)) // Link vital para Webhooks
+                    .build();
+
+            return Customer.create(params);
+        } catch (StripeException e) {
+            log.error("❌ Error creando Customer en Stripe: {}", e.getMessage());
+            throw new RuntimeException("Error al sincronizar usuario con Stripe.");
+        }
+    }
+
+    /**
+     * Suscribe al usuario a un Plan Gratuito directamente.
+     * No requiere tarjeta de crédito gracias a 'payment_behavior = allow_incomplete'.
+     */
+    public Subscription createBackendSubscription(String customerId, String priceId) {
+        try {
+            SubscriptionCreateParams params = SubscriptionCreateParams.builder()
+                    .setCustomer(customerId)
+                    .addItem(
+                            SubscriptionCreateParams.Item.builder()
+                                    .setPrice(priceId)
+                                    .build()
+                    )
+                    // ⚠️ CRÍTICO: Permite crear la subscripción aunque no haya tarjeta
+                    // Stripe lo aceptará porque el precio es $0.00
+                    .setPaymentBehavior(SubscriptionCreateParams.PaymentBehavior.ALLOW_INCOMPLETE)
+                    .build();
+
+            return Subscription.create(params);
+        } catch (StripeException e) {
+            log.error("❌ Error creando Suscripción Gratuita en Stripe: {}", e.getMessage());
+            throw new RuntimeException("Error al activar el plan gratuito.");
         }
     }
 }

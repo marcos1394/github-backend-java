@@ -34,6 +34,11 @@ public class RegistrationService {
     // Spring inyectará PubSubUserEventPublisher (Prod) o NoOpUserEventPublisher (Test)
     private final UserEventPublisher eventPublisher;
 
+    // 🎁 CONSTANTES DEL PLAN GRATUITO (TRIAL)
+    private static final Long FREE_PLAN_ID = 5L;
+    private static final String FREE_PLAN_NAME = "Plan Gratuito";
+    private static final int TRIAL_DAYS = 30;
+
     /**
      * Registra un nuevo Paciente (Consumer).
      */
@@ -95,6 +100,7 @@ public class RegistrationService {
 
     /**
      * Registra un nuevo Proveedor (Provider).
+     * ASIGNA AUTOMÁTICAMENTE EL PLAN GRATUITO DE 30 DÍAS.
      */
     @Transactional
     public ProviderRegistrationResponse registerProvider(RegisterProviderRequest request) {
@@ -128,6 +134,12 @@ public class RegistrationService {
                 .isEmailVerified(false)
                 .onboardingComplete(false)
                 .termsAccepted(request.isTermsAccepted())
+
+                // 🎁 ASIGNACIÓN DEL PLAN GRATUITO
+                .currentPlanId(FREE_PLAN_ID)
+                .hasActivePlan(true) // Nace activo para empezar el onboarding
+
+                // Auditoría
                 .createdAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
                 .build();
@@ -135,9 +147,18 @@ public class RegistrationService {
         // 4. Guardar
         Provider savedProvider = providerRepository.save(provider);
 
-        // 5. Datos Extra para Eventos
+        // 5. Datos Extra para Eventos (Incluyendo Trial)
         Map<String, Object> extraData = new HashMap<>();
         extraData.put("parentCategoryId", request.getParentCategoryId());
+
+        // --- DATA DEL PLAN (Para Notification & Payment Service) ---
+        extraData.put("planId", FREE_PLAN_ID);
+        extraData.put("planName", FREE_PLAN_NAME);
+        extraData.put("trialStartDate", LocalDateTime.now().toString());
+        extraData.put("trialEndDate", LocalDateTime.now().plusDays(TRIAL_DAYS).toString());
+        extraData.put("isTrial", true);
+        // -----------------------------------------------------------
+
         if (request.getReferralCode() != null) extraData.put("referralCode", request.getReferralCode());
         if (request.getUtmSource() != null) extraData.put("utmSource", request.getUtmSource());
         if (request.getUtmMedium() != null) extraData.put("utmMedium", request.getUtmMedium());
@@ -158,7 +179,7 @@ public class RegistrationService {
                 .email(savedProvider.getEmail())
                 .businessName(savedProvider.getBusinessName())
                 .firstName(savedProvider.getFirstName())
-                .message("Cuenta profesional creada. Verifica tu email para configurar tu perfil.")
+                .message("Cuenta profesional creada con Plan Gratuito (30 días).")
                 .createdAt(savedProvider.getCreatedAt())
                 .build();
     }
