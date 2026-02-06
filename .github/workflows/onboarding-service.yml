@@ -1,10 +1,10 @@
-name: Onboarding Service Pipeline 🚀
+name: Onboarding Service Pipeline
 
 on:
   push:
     branches: [ "main" ]
     paths:
-      - 'onboarding_service/**'     # 👈 Solo si hay cambios en onboarding
+      - 'onboarding_service/**'
       - '.github/workflows/onboarding-service.yml'
   pull_request:
     paths:
