@@ -28,7 +28,6 @@ jobs:
       # ✅ 2. Configuración: Variables NO secretas (Standard para todos los micros)
       # Definimos el Tópico aquí para no tenerlo hardcodeado en Java
       extra_env_vars: |
-        GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
         GCP_PUBSUB_TOPIC_USER_EVENTS=user-events-topic
 
       # ✅ 3. Secretos (Tu lista original)

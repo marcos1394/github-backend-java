@@ -28,7 +28,6 @@ jobs:
       # ✅ 2. Configuración: Variables NO secretas
       # Aquí van el Project ID y el nombre del Tópico (texto plano)
       extra_env_vars: |
-        GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
         GCP_PUBSUB_TOPIC_ONBOARDING_EVENTS=onboarding-events
 
       # ✅ 3. Secretos Reales (Secret Manager)
