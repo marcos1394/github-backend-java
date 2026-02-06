@@ -21,7 +21,7 @@ on:
         type: string
         description: "Key del proyecto en SonarCloud"
 
-      # 👇 NUEVO INPUT: Para variables NO secretas (Tópicos, IDs, etc.)
+      # 👇 INPUT PARA VARIABLES NORMALES (Tópicos, Logs, etc.)
       extra_env_vars:
         description: 'Variables de entorno NO secretas (KEY=VALUE) separadas por salto de línea'
         required: false
@@ -156,10 +156,13 @@ jobs:
           # Flags (Service Account)
           flags: ${{ inputs.flags }}
 
-          # ✅ AQUÍ OCURRE LA MAGIA: Concatenamos fijas + extras
+          # ✅ CORRECCIÓN FINAL:
+          # Inyectamos GCP_PROJECT_ID aquí mismo, usando el secreto que el template YA tiene.
+          # Luego pegamos las extra_env_vars (Tópicos) que vienen del microservicio.
           env_vars: |
             SPRING_PROFILES_ACTIVE=prod
             SERVER_PORT=8080
+            GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
             ${{ inputs.extra_env_vars }}
 
           # Secretos (GCP Secret Manager)
