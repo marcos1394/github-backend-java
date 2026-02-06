@@ -21,11 +21,10 @@ jobs:
     with:
       service_name: onboarding-service
       directory: onboarding_service
-      # Asegúrate de crear este proyecto en SonarQube o que se cree automático
       sonar_project_key: quhealthy-onboarding-service
 
-      # 👇 MAPEO DE SECRETOS (Environment Variables -> GCP Secret Manager)
-      # Formato: NOMBRE_VAR_EN_APP_YML = nombre_secreto_en_gcp:versión
+      flags: '--service-account=sa-onboarding@quhealthy-backend.iam.gserviceaccount.com'
+
       env_secrets_mapping: |
         DB_URL=application_db_url:latest
         DB_USER=application_db_user:latest
