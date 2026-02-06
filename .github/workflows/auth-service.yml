@@ -23,6 +23,7 @@ jobs:
       service_name: auth-service
       directory: auth_service
       sonar_project_key: quhealthy_auth_service
+      flags: '--service-account=sa-auth@quhealthy-backend.iam.gserviceaccount.com'
 
       # 👇 AQUÍ ESTÁ LA MAGIA DE LOS SECRETOS
       # Formato: VARIABLE_EN_PROPERTIES=NOMBRE_SECRETO_GCP:latest

@@ -11,6 +11,12 @@ on:
         required: true
         type: string
         description: "Directorio dentro del monorepo (ej: auth_service)"
+      # ✅ DEFINICIÓN DEL INPUT (Esto ya lo tenías bien)
+      flags:
+        description: 'Flags adicionales para gcloud run deploy (ej: --service-account)'
+        required: false
+        type: string
+        default: ''
       sonar_project_key:
         required: true
         type: string
@@ -139,6 +145,11 @@ jobs:
           service: ${{ inputs.service_name }}
           region: us-central1
           image: ${{ env.IMAGE_URI }}
+
+          # ✅ USO DEL FLAG (Esta era la línea faltante)
+          # Aquí es donde le pasamos "--service-account=..." al comando real
+          flags: ${{ inputs.flags }}
+
           # Variables de entorno NO sensibles
           env_vars: |
             SPRING_PROFILES_ACTIVE=prod

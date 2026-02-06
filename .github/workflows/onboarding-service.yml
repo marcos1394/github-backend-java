@@ -22,15 +22,9 @@ jobs:
       service_name: onboarding-service
       directory: onboarding_service
       sonar_project_key: quhealthy-onboarding-service
-
-      # ✅ CRÍTICO: Asignar la Service Account con permisos específicos
-      # Esto permite leer Secret Manager, subir a Storage y publicar en Pub/Sub.
-      # Sin esto, usa la cuenta default que no tiene acceso a nada y falla el arranque.
       flags: '--service-account=sa-onboarding@quhealthy-backend.iam.gserviceaccount.com'
 
-      # 👇 MAPEO DE SECRETOS (Environment Variables -> GCP Secret Manager)
-      # Nota: Asegúrate de que los nombres a la IZQUIERDA coincidan con tu application.yml
-      # y los de la DERECHA con los nombres en GCP Secret Manager.
+
       env_secrets_mapping: |
         DB_URL=application_db_url:latest
         DB_USER=application_db_user:latest
