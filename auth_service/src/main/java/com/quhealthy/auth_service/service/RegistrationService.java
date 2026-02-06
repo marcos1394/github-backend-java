@@ -5,10 +5,12 @@ import com.quhealthy.auth_service.dto.request.RegisterProviderRequest;
 import com.quhealthy.auth_service.dto.response.ConsumerRegistrationResponse;
 import com.quhealthy.auth_service.dto.response.ProviderRegistrationResponse;
 import com.quhealthy.auth_service.event.UserEvent;
-import com.quhealthy.auth_service.event.UserEventPublisher; // ✅ USO DE LA INTERFAZ
+import com.quhealthy.auth_service.event.UserEventPublisher;
 import com.quhealthy.auth_service.model.Consumer;
+import com.quhealthy.auth_service.model.Plan;
 import com.quhealthy.auth_service.model.Provider;
 import com.quhealthy.auth_service.repository.ConsumerRepository;
+import com.quhealthy.auth_service.repository.PlanRepository;
 import com.quhealthy.auth_service.repository.ProviderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,10 +30,8 @@ public class RegistrationService {
 
     private final ConsumerRepository consumerRepository;
     private final ProviderRepository providerRepository;
+    private final PlanRepository planRepository; // ✅ NECESARIO para buscar el Plan Trial
     private final PasswordEncoder passwordEncoder;
-
-    // ✅ INYECCIÓN DE DEPENDENCIA DE LA INTERFAZ
-    // Spring inyectará PubSubUserEventPublisher (Prod) o NoOpUserEventPublisher (Test)
     private final UserEventPublisher eventPublisher;
 
     // 🎁 CONSTANTES DEL PLAN GRATUITO (TRIAL)
@@ -109,10 +109,15 @@ public class RegistrationService {
         // 1. Validar unicidad
         validateEmailUniqueness(request.getEmail());
 
-        // 2. Token
+        // 2. 🔍 BUSCAR EL PLAN GRATUITO (CORRECCIÓN CRÍTICA)
+        // Buscamos la entidad Plan real para mantener la integridad referencial.
+        Plan freePlan = planRepository.findById(FREE_PLAN_ID)
+                .orElseThrow(() -> new IllegalStateException("Error crítico: El Plan Gratuito (ID " + FREE_PLAN_ID + ") no está configurado en la base de datos."));
+
+        // 3. Token de verificación
         String verificationToken = UUID.randomUUID().toString();
 
-        // 3. Crear Entidad Provider
+        // 4. Crear Entidad Provider
         Provider provider = Provider.builder()
                 // Identidad Personal
                 .firstName(request.getFirstName())
@@ -132,28 +137,32 @@ public class RegistrationService {
                 // Estados y Legal
                 .emailVerificationToken(verificationToken)
                 .isEmailVerified(false)
-                .onboardingComplete(false)
                 .termsAccepted(request.isTermsAccepted())
 
-                // 🎁 ASIGNACIÓN DEL PLAN GRATUITO
-                .currentPlanId(FREE_PLAN_ID)
-                .hasActivePlan(true) // Nace activo para empezar el onboarding
+                // ⚠️ CAMPOS NUEVOS OBLIGATORIOS (Fix del modelo Provider)
+                .onboardingComplete(false)
+                .onboardingStatus("PROFILE_PENDING") // Estado explícito para el Frontend
+                .kycStatus("PENDING")                // KYC explícito
+
+                // 🎁 ASIGNACIÓN DEL PLAN (Fix de la relación ManyToOne)
+                .plan(freePlan)      // ✅ Pasamos el objeto, no el ID
+                .hasActivePlan(true) // Nace activo
 
                 // Auditoría
                 .createdAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
                 .build();
 
-        // 4. Guardar
+        // 5. Guardar
         Provider savedProvider = providerRepository.save(provider);
 
-        // 5. Datos Extra para Eventos (Incluyendo Trial)
+        // 6. Datos Extra para Eventos (Incluyendo Trial)
         Map<String, Object> extraData = new HashMap<>();
         extraData.put("parentCategoryId", request.getParentCategoryId());
 
         // --- DATA DEL PLAN (Para Notification & Payment Service) ---
-        extraData.put("planId", FREE_PLAN_ID);
-        extraData.put("planName", FREE_PLAN_NAME);
+        extraData.put("planId", freePlan.getId());
+        extraData.put("planName", freePlan.getName());
         extraData.put("trialStartDate", LocalDateTime.now().toString());
         extraData.put("trialEndDate", LocalDateTime.now().plusDays(TRIAL_DAYS).toString());
         extraData.put("isTrial", true);
@@ -163,7 +172,7 @@ public class RegistrationService {
         if (request.getUtmSource() != null) extraData.put("utmSource", request.getUtmSource());
         if (request.getUtmMedium() != null) extraData.put("utmMedium", request.getUtmMedium());
 
-        // 6. Publicar Evento
+        // 7. Publicar Evento
         publishRegistrationEvent(
                 savedProvider.getId(),
                 savedProvider.getEmail(),
@@ -173,13 +182,13 @@ public class RegistrationService {
                 extraData
         );
 
-        // 7. Respuesta
+        // 8. Respuesta
         return ProviderRegistrationResponse.builder()
                 .id(savedProvider.getId())
                 .email(savedProvider.getEmail())
                 .businessName(savedProvider.getBusinessName())
                 .firstName(savedProvider.getFirstName())
-                .message("Cuenta profesional creada con Plan Gratuito (30 días).")
+                .message("Cuenta profesional creada con Plan Gratuito.")
                 .createdAt(savedProvider.getCreatedAt())
                 .build();
     }
@@ -197,9 +206,6 @@ public class RegistrationService {
         }
     }
 
-    /**
-     * Construye y publica el evento unificado.
-     */
     private void publishRegistrationEvent(Long userId, String email, String role, String token, String name, Map<String, Object> extraData) {
         Map<String, Object> payload = new HashMap<>();
 
@@ -221,7 +227,6 @@ public class RegistrationService {
                 .timestamp(LocalDateTime.now())
                 .build();
 
-        // ✅ LLAMADA A TRAVÉS DE LA INTERFAZ
         eventPublisher.publish(event);
     }
 }

@@ -11,7 +11,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.NonNull;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
@@ -60,14 +59,28 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     .parseClaimsJws(jwt)
                     .getBody();
 
-            userEmail = claims.getSubject();
+            userEmail = claims.getSubject(); // Email
 
-            // 3. Extraer ID y ROL
+            // 3. Extraer Datos Enriquecidos (El Pasaporte Digital) 🛂
+
+            // A. ID de Usuario (Vital)
             Long userId = null;
             if (claims.get("id") != null) {
-                // Mantenemos este cast seguro, es vital.
                 userId = ((Number) claims.get("id")).longValue();
             }
+
+            // B. Plan ID (Default: 5 - Gratuito, si no viene en el token)
+            Long planId = 5L;
+            if (claims.get("planId") != null) {
+                planId = ((Number) claims.get("planId")).longValue();
+            }
+
+            // C. Estados de Onboarding y KYC (Defaults seguros)
+            String onboardingStatus = claims.get("onboardingStatus", String.class);
+            if (onboardingStatus == null) onboardingStatus = "PENDING";
+
+            String kycStatus = claims.get("kycStatus", String.class);
+            if (kycStatus == null) kycStatus = "PENDING";
 
             String role = claims.get("role", String.class);
 
@@ -78,20 +91,25 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         ? List.of(new SimpleGrantedAuthority("ROLE_" + role))
                         : Collections.emptyList();
 
-                // El principal es el userId, igual que en Onboarding
-                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                        userId,
-                        null,
-                        authorities
+                // ✅ USAMOS EL TOKEN PERSONALIZADO
+                // Aquí inyectamos el Plan y los Estados en la sesión del hilo actual.
+                CustomAuthenticationToken authToken = new CustomAuthenticationToken(
+                        userId, // Principal
+                        null,   // Credentials
+                        authorities,
+                        planId,
+                        onboardingStatus,
+                        kycStatus
                 );
 
                 authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
 
                 SecurityContextHolder.getContext().setAuthentication(authToken);
-                log.debug("✅ Usuario autenticado en Catalog Service: {}", userEmail);
+
+                // Debug log útil para verificar que estamos leyendo bien el plan
+                log.debug("✅ Usuario autenticado: {} | Plan ID: {} | KYC: {}", userEmail, planId, kycStatus);
             }
         } catch (Exception e) {
-            // Logueamos como WARN o ERROR para monitorear intentos fallidos
             log.error("❌ Error validando JWT en Catalog Service: {}", e.getMessage());
         }
 

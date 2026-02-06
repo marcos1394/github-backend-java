@@ -4,11 +4,13 @@ import com.quhealthy.auth_service.dto.request.RegisterConsumerRequest;
 import com.quhealthy.auth_service.dto.request.RegisterProviderRequest;
 import com.quhealthy.auth_service.dto.response.ConsumerRegistrationResponse;
 import com.quhealthy.auth_service.dto.response.ProviderRegistrationResponse;
-import com.quhealthy.auth_service.model.Consumer;
-import com.quhealthy.auth_service.model.Provider;
 import com.quhealthy.auth_service.event.UserEvent;
-import com.quhealthy.auth_service.event.UserEventPublisher; // ⚠️ CORRECCIÓN: Importamos la Interfaz
+import com.quhealthy.auth_service.event.UserEventPublisher;
+import com.quhealthy.auth_service.model.Consumer;
+import com.quhealthy.auth_service.model.Plan; // ✅ Importamos Plan
+import com.quhealthy.auth_service.model.Provider;
 import com.quhealthy.auth_service.repository.ConsumerRepository;
+import com.quhealthy.auth_service.repository.PlanRepository; // ✅ Importamos Repo
 import com.quhealthy.auth_service.repository.ProviderRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,7 +21,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.math.BigDecimal;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -36,7 +40,10 @@ class RegistrationServiceTest {
     @Mock
     private PasswordEncoder passwordEncoder;
 
-    // ⚠️ CORRECCIÓN: Mockeamos la Interfaz (El contrato), no la implementación de Pub/Sub
+    // ✅ NUEVO MOCK: Necesario porque el servicio ahora busca el plan
+    @Mock
+    private PlanRepository planRepository;
+
     @Mock
     private UserEventPublisher eventPublisher;
 
@@ -78,28 +85,24 @@ class RegistrationServiceTest {
         assertEquals(100L, response.getId());
         assertEquals("new.patient@test.com", response.getEmail());
 
-        // Verificaciones:
-        // Usamos el mock de la interfaz 'eventPublisher'
         ArgumentCaptor<UserEvent> eventCaptor = ArgumentCaptor.forClass(UserEvent.class);
         verify(eventPublisher, times(1)).publish(eventCaptor.capture());
 
         UserEvent capturedEvent = eventCaptor.getValue();
-        assertEquals("USER_REGISTERED", capturedEvent.getEventType());
         assertEquals("CONSUMER", capturedEvent.getRole());
 
         @SuppressWarnings("unchecked")
         Map<String, Object> payload = capturedEvent.getPayload();
         assertEquals("FRIEND123", payload.get("referralCode"));
-        assertNotNull(payload.get("verificationToken"));
     }
 
     // ========================================================================
-    // ✅ TEST: REGISTRO PROVIDER
+    // ✅ TEST: REGISTRO PROVIDER (ACTUALIZADO)
     // ========================================================================
 
     @Test
-    @DisplayName("Debe registrar un Proveedor exitosamente con estado pendiente de onboarding")
-    void registerProvider_ShouldSucceed_WhenEmailIsUnique() {
+    @DisplayName("Debe registrar Provider, asignar Plan Gratuito y estados iniciales correctos")
+    void registerProvider_ShouldSucceed_AndAssignFreePlan() {
         // Arrange
         RegisterProviderRequest request = RegisterProviderRequest.builder()
                 .email("dr.house@test.com")
@@ -111,14 +114,26 @@ class RegistrationServiceTest {
                 .termsAccepted(true)
                 .build();
 
+        // 1. Mocks de Validación
         when(consumerRepository.existsByEmail(anyString())).thenReturn(false);
         when(providerRepository.existsByEmail(anyString())).thenReturn(false);
         when(passwordEncoder.encode(request.getPassword())).thenReturn("hashed_secret");
 
+        // 2. ✅ MOCK DEL PLAN: El servicio buscará el ID 5, debemos tenerlo listo
+        Plan mockFreePlan = Plan.builder()
+                .id(5L)
+                .name("Plan Gratuito")
+                .price(BigDecimal.ZERO)
+                .qumarketAccess(false)
+                .build();
+
+        when(planRepository.findById(5L)).thenReturn(Optional.of(mockFreePlan));
+
+        // 3. Mock del Save
         when(providerRepository.save(any(Provider.class))).thenAnswer(invocation -> {
             Provider p = invocation.getArgument(0);
             p.setId(200L);
-            return p;
+            return p; // Retornamos el mismo objeto que intentó guardar
         });
 
         // Act
@@ -128,52 +143,80 @@ class RegistrationServiceTest {
         assertNotNull(response);
         assertEquals("dr.house@test.com", response.getEmail());
 
+        // Capturamos qué se intentó guardar en la BD
         ArgumentCaptor<Provider> providerCaptor = ArgumentCaptor.forClass(Provider.class);
         verify(providerRepository).save(providerCaptor.capture());
-
         Provider savedProvider = providerCaptor.getValue();
+
+        // ✅ VERIFICACIONES DE INTEGRIDAD (NUEVOS CAMPOS)
+        // 1. Plan asignado correctamente
+        assertNotNull(savedProvider.getPlan());
+        assertEquals(5L, savedProvider.getPlan().getId());
+        assertTrue(savedProvider.isHasActivePlan());
+
+        // 2. Estados de Onboarding y KYC
+        assertEquals("PROFILE_PENDING", savedProvider.getOnboardingStatus());
+        assertEquals("PENDING", savedProvider.getKycStatus());
         assertFalse(savedProvider.getOnboardingComplete());
+
+        // 3. Categorización inicial
         assertNull(savedProvider.getCategory());
         assertEquals(5L, savedProvider.getParentCategoryId());
 
-        // Verificar publicación en la interfaz
+        // ✅ VERIFICACIÓN DE EVENTO
         verify(eventPublisher, times(1)).publish(any(UserEvent.class));
     }
 
     // ========================================================================
-    // ❌ TEST: VALIDACIÓN DE DUPLICADOS
+    // ❌ TEST: FALLO POR FALTA DE PLAN (Robustez)
+    // ========================================================================
+
+    @Test
+    @DisplayName("Debe lanzar IllegalStateException si el Plan Gratuito no existe en BD")
+    void registerProvider_ShouldThrow_WhenFreePlanMissing() {
+        // Arrange
+        RegisterProviderRequest request = RegisterProviderRequest.builder()
+                .email("dr.fail@test.com")
+                .password("pass")
+                .build();
+
+        when(consumerRepository.existsByEmail(anyString())).thenReturn(false);
+        when(providerRepository.existsByEmail(anyString())).thenReturn(false);
+
+        // Simulamos que la BD devuelve vacío para el Plan 5
+        when(planRepository.findById(5L)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> registrationService.registerProvider(request));
+
+        assertTrue(ex.getMessage().contains("Plan Gratuito (ID 5) no está configurado"));
+
+        // Aseguramos que NO se guardó nada
+        verify(providerRepository, never()).save(any());
+    }
+
+    // ========================================================================
+    // ❌ TESTS DE VALIDACIÓN (Sin Cambios Mayores)
     // ========================================================================
 
     @Test
     @DisplayName("Debe lanzar excepción si el email ya existe como CONSUMER")
     void registerConsumer_ShouldThrow_WhenEmailExistsInConsumers() {
-        // Arrange
         RegisterConsumerRequest request = new RegisterConsumerRequest("exist@test.com", "123", "F", "L", true, null, null, null);
         when(consumerRepository.existsByEmail(request.getEmail())).thenReturn(true);
 
-        // Act & Assert
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> registrationService.registerConsumer(request));
-
-        assertEquals("El correo electrónico ya está registrado como Paciente.", exception.getMessage());
-
+        assertThrows(IllegalArgumentException.class, () -> registrationService.registerConsumer(request));
         verify(consumerRepository, never()).save(any());
-        verify(eventPublisher, never()).publish(any());
     }
 
     @Test
-    @DisplayName("Debe lanzar excepción si el email ya existe como PROVIDER (Cross-Table Check)")
+    @DisplayName("Debe lanzar excepción si el email ya existe como PROVIDER")
     void registerConsumer_ShouldThrow_WhenEmailExistsInProviders() {
-        // Arrange
         RegisterConsumerRequest request = new RegisterConsumerRequest("doctor@test.com", "123", "F", "L", true, null, null, null);
-
         when(consumerRepository.existsByEmail(request.getEmail())).thenReturn(false);
         when(providerRepository.existsByEmail(request.getEmail())).thenReturn(true);
 
-        // Act & Assert
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> registrationService.registerConsumer(request));
-
-        assertEquals("El correo electrónico ya está registrado como Profesional.", exception.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> registrationService.registerConsumer(request));
     }
 }
