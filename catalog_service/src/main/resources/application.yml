@@ -1,0 +1,78 @@
+server:
+  port: ${PORT:8082} # ⚠️ Catalog Service corre en el 8082
+
+spring:
+  application:
+    name: catalog-service
+
+  # BASE DE DATOS (Produccion: Cloud SQL / Neon)
+  # Requiere que la BD tenga la extensión PostGIS habilitada
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  # JPA / HIBERNATE
+  jpa:
+    open-in-view: false
+    show-sql: false
+    hibernate:
+      ddl-auto: update # En prod cambiar a 'validate' idealmente
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 20
+        format_sql: false
+        # Dialecto espacial para PostGIS (Vital para las búsquedas /nearby)
+        dialect: org.hibernate.spatial.dialect.postgis.PostgisPG95Dialect
+
+  # FORMATO DE FECHAS
+  jackson:
+    date-format: yyyy-MM-dd'T'HH:mm:ss
+    time-zone: UTC
+
+  # UPLOAD DE IMÁGENES (Productos/Logos)
+  servlet:
+    multipart:
+      max-file-size: 5MB  # Imágenes suelen ser más ligeras que PDFs de KYC
+      max-request-size: 5MB
+
+  # GOOGLE CLOUD (Para Storage y futuros eventos)
+  cloud:
+    gcp:
+      project-id: ${GCP_PROJECT_ID}
+      pubsub:
+        enabled: true
+
+# SEGURIDAD (Validación de Token)
+application:
+  security:
+    jwt:
+      secret-key: ${JWT_SECRET_KEY}
+
+# CONFIGURACIÓN CUSTOM GCP (Unificada)
+gcp:
+  # Bucket para Logos, Banners y Fotos de Productos (Público/Semi-público)
+  bucket-name: ${GCP_BUCKET_NAME:quhealthy-catalog-images-prod}
+
+# STORAGE STRATEGY (Pattern Strategy)
+storage:
+  provider: ${STORAGE_PROVIDER:gcp}
+
+# Config MinIO (Valores por defecto vacios, se llenan en perfil local)
+minio:
+  url: ${MINIO_URL:http://minio:9000}
+  access-key: ${MINIO_ACCESS_KEY}
+  secret-key: ${MINIO_SECRET_KEY}
+  bucket-name: ${MINIO_BUCKET_NAME}
+
+# ACTUATOR (Health Checks & Metrics)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always

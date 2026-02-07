@@ -3,10 +3,13 @@ package com.quhealthy.catalog_service.service;
 import com.quhealthy.catalog_service.dto.CatalogItemRequest;
 import com.quhealthy.catalog_service.dto.CatalogItemResponse;
 import com.quhealthy.catalog_service.dto.CatalogItemSummary;
+import com.quhealthy.catalog_service.event.CatalogEventPublisher;
 import com.quhealthy.catalog_service.model.CatalogItem;
+import com.quhealthy.catalog_service.model.StoreProfile;
 import com.quhealthy.catalog_service.model.enums.ItemStatus;
 import com.quhealthy.catalog_service.model.enums.ItemType;
 import com.quhealthy.catalog_service.repository.CatalogItemRepository;
+import com.quhealthy.catalog_service.repository.StoreProfileRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +22,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -28,21 +32,30 @@ import java.util.stream.Collectors;
 public class CatalogService {
 
     private final CatalogItemRepository repository;
+    private final StoreProfileRepository storeProfileRepository;
+    private final PlanLimitService planLimitService;
+    private final CatalogEventPublisher eventPublisher;
 
-    // ==========================================
+    // ========================================================================
     // 🏭 1. CREACIÓN Y GESTIÓN (Provider)
-    // ==========================================
+    // ========================================================================
 
     @Transactional
-    public CatalogItemResponse createItem(Long providerId, CatalogItemRequest request) {
-        log.info("Creando ítem para provider {}: {}", providerId, request.getName());
+    public CatalogItemResponse createItem(Long providerId, CatalogItemRequest request, Long planId) {
+        log.info("Creando ítem para provider {} con Plan ID {}", providerId, planId);
 
-        // 1. Validar Duplicados (Regla de Negocio)
+        // 1. 🛡️ VALIDAR LÍMITES DE PLAN (El Cadenero)
+        planLimitService.validateCreationLimit(providerId, planId, request.getType());
+
+        // 2. Validar Duplicados
         if (repository.existsByProviderIdAndNameAndStatusNot(providerId, request.getName(), ItemStatus.ARCHIVED)) {
             throw new IllegalArgumentException("Ya existe un servicio o producto activo con este nombre.");
         }
 
-        // 2. Construir Entidad Base
+        // 3. Determinar Visibilidad en Marketplace
+        boolean hasMarketAccess = planLimitService.hasMarketplaceAccess(planId);
+
+        // 4. Construir Entidad
         CatalogItem item = CatalogItem.builder()
                 .providerId(providerId)
                 .type(request.getType())
@@ -59,21 +72,38 @@ public class CatalogService {
                 .latitude(request.getLatitude())
                 .longitude(request.getLongitude())
                 .locationName(request.getLocationName())
-                // Innovación: AI Tags & Metadata
+                // Metadatos
                 .searchTags(request.getSearchTags())
                 .metadata(request.getMetadata())
                 .build();
 
-        // 3. Mapeo Específico por Tipo
+        // 5. Mapeo Específico
         mapTypeSpecificFields(item, request);
 
-        // 4. Lógica de PAQUETES (Si aplica)
+        // 6. Lógica de Paquetes
         if (request.getType() == ItemType.PACKAGE && request.getPackageItemIds() != null) {
             linkPackageItems(item, request.getPackageItemIds(), providerId);
         }
 
+        // 7. Guardar
         CatalogItem savedItem = repository.save(item);
-        return mapToResponse(savedItem, null, null); // Sin coordenadas de usuario al crear
+
+        // 8. Asegurar Identidad de Tienda
+        ensureStoreProfileExists(providerId, hasMarketAccess);
+
+        // ✅ 9. PUBLICAR EVENTO
+        eventPublisher.publish(
+                providerId,
+                "ITEM_CREATED",
+                Map.of(
+                        "itemId", savedItem.getId(),
+                        "name", savedItem.getName(),
+                        "type", savedItem.getType().name(),
+                        "category", savedItem.getCategory() != null ? savedItem.getCategory() : "GENERAL"
+                )
+        );
+
+        return mapToResponse(savedItem, null, null);
     }
 
     @Transactional
@@ -98,33 +128,94 @@ public class CatalogService {
         // Actualizar campos específicos
         mapTypeSpecificFields(item, request);
 
-        // Actualizar Paquete (si cambiaron los items)
+        // Actualizar Paquete
         if (item.getType() == ItemType.PACKAGE && request.getPackageItemIds() != null) {
             linkPackageItems(item, request.getPackageItemIds(), providerId);
         }
 
-        return mapToResponse(repository.save(item), null, null);
+        CatalogItem savedItem = repository.save(item);
+
+        // ✅ PUBLICAR EVENTO DE ACTUALIZACIÓN
+        eventPublisher.publish(
+                providerId,
+                "ITEM_UPDATED",
+                Map.of(
+                        "itemId", savedItem.getId(),
+                        "name", savedItem.getName(),
+                        "price", savedItem.getPrice(),
+                        "status", savedItem.getStatus().name()
+                )
+        );
+
+        return mapToResponse(savedItem, null, null);
     }
 
     @Transactional
     public void deleteItem(Long providerId, Long itemId) {
         CatalogItem item = getOwnedItem(providerId, itemId);
+
         // Soft Delete (Enterprise Standard)
         item.setStatus(ItemStatus.ARCHIVED);
         repository.save(item);
+
+        // ✅ PUBLICAR EVENTO DE ARCHIVADO
+        eventPublisher.publish(
+                providerId,
+                "ITEM_ARCHIVED",
+                Map.of("itemId", itemId)
+        );
+
         log.info("Ítem {} archivado por provider {}", itemId, providerId);
     }
 
-    // ==========================================
-    // 🔍 2. BÚSQUEDA Y DISCOVERY (Public/Patient)
-    // ==========================================
+    // ========================================================================
+    // 🎨 2. GESTIÓN DE TIENDA (Branding)
+    // ========================================================================
+
+    @Transactional
+    public StoreProfile updateStoreBranding(Long providerId, StoreProfile newProfile) {
+        StoreProfile profile = storeProfileRepository.findById(providerId)
+                .orElse(StoreProfile.builder().providerId(providerId).build());
+
+        profile.setDisplayName(newProfile.getDisplayName());
+        profile.setBio(newProfile.getBio());
+        profile.setLogoUrl(newProfile.getLogoUrl());
+        profile.setBannerUrl(newProfile.getBannerUrl());
+        profile.setPrimaryColor(newProfile.getPrimaryColor());
+        profile.setSecondaryColor(newProfile.getSecondaryColor());
+        profile.setShowLocation(newProfile.isShowLocation());
+        profile.setWhatsappEnabled(newProfile.isWhatsappEnabled());
+
+        StoreProfile savedProfile = storeProfileRepository.save(profile);
+
+        // ✅ PUBLICAR EVENTO DE PERFIL
+        eventPublisher.publish(
+                providerId,
+                "STORE_UPDATED",
+                Map.of(
+                        "displayName", savedProfile.getDisplayName() != null ? savedProfile.getDisplayName() : "",
+                        "hasLogo", (savedProfile.getLogoUrl() != null)
+                )
+        );
+
+        return savedProfile;
+    }
+
+    @Transactional(readOnly = true)
+    public StoreProfile getStoreProfile(Long providerId) {
+        return storeProfileRepository.findById(providerId)
+                .orElseThrow(() -> new EntityNotFoundException("Tienda no encontrada"));
+    }
+
+    // ========================================================================
+    // 🔍 3. BÚSQUEDA Y DISCOVERY (Public/Patient)
+    // ========================================================================
 
     @Transactional(readOnly = true)
     public CatalogItemResponse getItemDetail(Long itemId, Double userLat, Double userLng) {
         CatalogItem item = repository.findById(itemId)
                 .orElseThrow(() -> new EntityNotFoundException("Ítem no encontrado"));
 
-        // Validar que no esté archivado (salvo que sea el dueño, pero aquí asumimos vista pública)
         if (item.getStatus() == ItemStatus.ARCHIVED) {
             throw new EntityNotFoundException("Este ítem ya no está disponible");
         }
@@ -134,14 +225,13 @@ public class CatalogService {
 
     @Transactional(readOnly = true)
     public Page<CatalogItemResponse> getNearbyItems(Double lat, Double lng, Double radiusKm, Pageable pageable) {
-        // Usamos el Query Geoespacial de PostGIS
+        // Usamos el Query Geoespacial de PostGIS definido en el Repositorio
         return repository.findNearbyItems(lat, lng, radiusKm, pageable)
                 .map(item -> mapToResponse(item, lat, lng));
     }
 
     @Transactional(readOnly = true)
     public Page<CatalogItemResponse> searchGlobal(Long providerId, String keyword, Pageable pageable) {
-        // Usamos el Query de Texto + Tags
         return repository.searchActiveItems(providerId, keyword, pageable)
                 .map(item -> mapToResponse(item, null, null));
     }
@@ -156,22 +246,37 @@ public class CatalogService {
                 .map(item -> mapToResponse(item, null, null));
     }
 
-    // ==========================================
-    // 🛠️ 3. MÉTODOS PRIVADOS (Helpers)
-    // ==========================================
+    // ========================================================================
+    // 🛠️ MÉTODOS PRIVADOS (Helpers)
+    // ========================================================================
+
+    private void ensureStoreProfileExists(Long providerId, boolean hasMarketAccess) {
+        if (!storeProfileRepository.existsById(providerId)) {
+            StoreProfile profile = StoreProfile.builder()
+                    .providerId(providerId)
+                    .marketplaceVisible(hasMarketAccess)
+                    .build();
+            storeProfileRepository.save(profile);
+        } else {
+            // Actualizar permiso si cambió el plan (Sync Lazy)
+            StoreProfile profile = storeProfileRepository.getReferenceById(providerId);
+            if (profile.isMarketplaceVisible() != hasMarketAccess) {
+                profile.setMarketplaceVisible(hasMarketAccess);
+                storeProfileRepository.save(profile);
+            }
+        }
+    }
 
     private void mapTypeSpecificFields(CatalogItem item, CatalogItemRequest request) {
         if (item.getType() == ItemType.SERVICE) {
             item.setDurationMinutes(request.getDurationMinutes());
             item.setModality(request.getModality());
-            // Limpiar campos de producto
             item.setStockQuantity(null);
             item.setSku(null);
         } else if (item.getType() == ItemType.PRODUCT) {
             item.setSku(request.getSku());
             item.setStockQuantity(request.getStockQuantity());
             item.setIsDigital(request.getIsDigital());
-            // Limpiar campos de servicio
             item.setDurationMinutes(null);
         }
     }
@@ -179,7 +284,6 @@ public class CatalogService {
     private void linkPackageItems(CatalogItem packageItem, Set<Long> childIds, Long providerId) {
         List<CatalogItem> children = repository.findAllById(childIds);
 
-        // Validar que todos los items pertenezcan al mismo provider (Seguridad)
         boolean allBelongToProvider = children.stream().allMatch(c -> c.getProviderId().equals(providerId));
         if (!allBelongToProvider) {
             throw new SecurityException("No puedes agregar ítems que no te pertenecen al paquete.");
@@ -198,28 +302,24 @@ public class CatalogService {
         return item;
     }
 
-    // --- MAPPER MANUAL (Más rápido y controlado que MapStruct para lógica compleja) ---
+    // --- MAPPER MANUAL ---
 
     private CatalogItemResponse mapToResponse(CatalogItem item, Double userLat, Double userLng) {
 
-        // 1. Calcular Distancia (si tenemos coordenadas del usuario)
         Double distanceKm = null;
         if (userLat != null && userLng != null && item.getLatitude() != null && item.getLongitude() != null) {
             distanceKm = calculateDistanceKm(userLat, userLng, item.getLatitude(), item.getLongitude());
         }
 
-        // 2. Calcular % Descuento (Marketing)
         Integer discountPct = 0;
         if (item.getCompareAtPrice() != null && item.getCompareAtPrice().compareTo(BigDecimal.ZERO) > 0) {
             BigDecimal diff = item.getCompareAtPrice().subtract(item.getPrice());
-            // (Diff / CompareAt) * 100
             if (diff.compareTo(BigDecimal.ZERO) > 0) {
                 discountPct = diff.divide(item.getCompareAtPrice(), 2, RoundingMode.HALF_UP)
                         .multiply(new BigDecimal(100)).intValue();
             }
         }
 
-        // 3. Mapear Contenido del Paquete (Resumen)
         Set<CatalogItemSummary> packageContents = null;
         if (item.getType() == ItemType.PACKAGE && item.getPackageItems() != null) {
             packageContents = item.getPackageItems().stream()
@@ -246,18 +346,15 @@ public class CatalogService {
                 .compareAtPrice(item.getCompareAtPrice())
                 .currency(item.getCurrency())
                 .discountPercentage(discountPct)
-                // Geo
                 .latitude(item.getLatitude())
                 .longitude(item.getLongitude())
                 .locationName(item.getLocationName())
                 .distanceKm(distanceKm)
-                // Específicos
                 .durationMinutes(item.getDurationMinutes())
                 .modality(item.getModality())
                 .sku(item.getSku())
                 .stockQuantity(item.getStockQuantity())
                 .isDigital(item.getIsDigital())
-                // Extras
                 .packageContents(packageContents)
                 .metadata(item.getMetadata())
                 .searchTags(item.getSearchTags())
@@ -267,7 +364,6 @@ public class CatalogService {
                 .build();
     }
 
-    // Fórmula Haversine simple (Para display en DTO, la búsqueda real la hace PostGIS)
     private Double calculateDistanceKm(double lat1, double lon1, double lat2, double lon2) {
         final int R = 6371; // Radio Tierra km
         double latDistance = Math.toRadians(lat2 - lat1);
@@ -276,7 +372,6 @@ public class CatalogService {
                 + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
                 * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
         double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        // Redondear a 1 decimal (ej: 5.2 km)
         return BigDecimal.valueOf(R * c).setScale(1, RoundingMode.HALF_UP).doubleValue();
     }
 }

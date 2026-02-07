@@ -1,5 +1,6 @@
 package com.quhealthy.catalog_service.controller;
 
+import com.quhealthy.catalog_service.config.CustomAuthenticationToken;
 import com.quhealthy.catalog_service.dto.CatalogItemRequest;
 import com.quhealthy.catalog_service.dto.CatalogItemResponse;
 import com.quhealthy.catalog_service.service.CatalogService;
@@ -12,6 +13,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
@@ -22,73 +24,79 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class CatalogController {
 
-    private final CatalogService service;
+    private final CatalogService catalogService;
 
-    // ==========================================
-    // 🔐 1. GESTIÓN DEL DOCTOR (Requiere Token)
-    // ==========================================
+    // ========================================================================
+    // 🔐 GESTIÓN DEL PROVEEDOR (Requiere Token PROVIDER)
+    // ========================================================================
 
-    @PostMapping
+    @PostMapping("/items")
+    @PreAuthorize("hasRole('PROVIDER')")
     public ResponseEntity<CatalogItemResponse> createItem(@Valid @RequestBody CatalogItemRequest request) {
-        Long providerId = getCurrentUserId();
-        CatalogItemResponse response = service.createItem(providerId, request);
+        CustomAuthenticationToken session = getSession();
+        Long providerId = (Long) session.getPrincipal();
+        Long planId = session.getPlanId();
+
+        log.info("📝 Provider {} (Plan {}) creando ítem: {}", providerId, planId, request.getName());
+
+        CatalogItemResponse response = catalogService.createItem(providerId, request, planId);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
-    @PutMapping("/{id}")
+    @PutMapping("/items/{id}")
+    @PreAuthorize("hasRole('PROVIDER')")
     public ResponseEntity<CatalogItemResponse> updateItem(
             @PathVariable Long id,
             @Valid @RequestBody CatalogItemRequest request
     ) {
-        Long providerId = getCurrentUserId();
-        return ResponseEntity.ok(service.updateItem(providerId, id, request));
+        Long providerId = (Long) getSession().getPrincipal();
+        return ResponseEntity.ok(catalogService.updateItem(providerId, id, request));
     }
 
-    @DeleteMapping("/{id}")
+    @DeleteMapping("/items/{id}")
+    @PreAuthorize("hasRole('PROVIDER')")
     public ResponseEntity<Void> deleteItem(@PathVariable Long id) {
-        Long providerId = getCurrentUserId();
-        service.deleteItem(providerId, id);
+        Long providerId = (Long) getSession().getPrincipal();
+        catalogService.deleteItem(providerId, id);
         return ResponseEntity.noContent().build();
     }
 
     /**
      * Dashboard del Doctor: "Mis Servicios".
-     * Muestra todo (Activos, Pausados, Archivados).
+     * Devuelve todo su catálogo (Activo, Pausado, etc).
      */
-    @GetMapping("/me")
+    @GetMapping("/me/items")
+    @PreAuthorize("hasRole('PROVIDER')")
     public ResponseEntity<Page<CatalogItemResponse>> getMyCatalog(
-            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable
+            @PageableDefault(size = 20, sort = "updatedAt", direction = Sort.Direction.DESC) Pageable pageable
     ) {
-        Long providerId = getCurrentUserId();
-        // Usamos el método de búsqueda global filtrado por providerId
-        // Para el dashboard, podríamos querer ver todo, aquí reutilizo la búsqueda por categoría o todo.
-        // Nota: Si necesitas ver items INACTIVOS, deberíamos agregar un método específico en Service.
-        // Por ahora, usamos el getProviderCatalog que filtra por ACTIVE.
-        // Si quieres ver TODO (dashboard admin), usa findAllByProviderId del repo directo o crea servicio.
-        // Asumiremos que el doctor ve su vista pública por ahora.
-        return ResponseEntity.ok(service.getProviderCatalog(providerId, null, pageable));
+        Long providerId = (Long) getSession().getPrincipal();
+        // Reutilizamos la búsqueda por provider, pero en el futuro podríamos querer ver también los archivados.
+        // Por ahora, ver lo que ve el público es suficiente para el MVP.
+        return ResponseEntity.ok(catalogService.getProviderCatalog(providerId, null, pageable));
     }
 
-    // ==========================================
-    // 🌍 2. BÚSQUEDA PÚBLICA (Pacientes)
-    // ==========================================
+    // ========================================================================
+    // 🌍 BÚSQUEDA PÚBLICA Y DISCOVERY (Pacientes & Marketplace)
+    // ========================================================================
 
     /**
      * Detalle de un Producto/Servicio.
-     * Recibe lat/lng opcionales para calcular "A cuántos km estás".
+     * @param lat Latitud del usuario (opcional, para calcular "a X km de ti")
+     * @param lng Longitud del usuario (opcional)
      */
-    @GetMapping("/{id}")
+    @GetMapping("/items/{id}")
     public ResponseEntity<CatalogItemResponse> getItemDetail(
             @PathVariable Long id,
             @RequestParam(required = false) Double lat,
             @RequestParam(required = false) Double lng
     ) {
-        return ResponseEntity.ok(service.getItemDetail(id, lat, lng));
+        return ResponseEntity.ok(catalogService.getItemDetail(id, lat, lng));
     }
 
     /**
-     * 🛰️ MARKETPLACE: Búsqueda "Cerca de mí".
-     * Busca en TODOS los doctores.
+     * 🛰️ MARKETPLACE: "Cerca de Mí".
+     * Busca ítems geo-localizados.
      */
     @GetMapping("/nearby")
     public ResponseEntity<Page<CatalogItemResponse>> getNearbyItems(
@@ -97,24 +105,13 @@ public class CatalogController {
             @RequestParam(defaultValue = "10.0") Double radiusKm,
             @PageableDefault(size = 20) Pageable pageable
     ) {
-        return ResponseEntity.ok(service.getNearbyItems(lat, lng, radiusKm, pageable));
+        return ResponseEntity.ok(catalogService.getNearbyItems(lat, lng, radiusKm, pageable));
     }
 
     /**
-     * Tienda de un Doctor Específico.
-     * Ej: Cuando entras al perfil del "Dr. House".
-     */
-    @GetMapping("/provider/{providerId}")
-    public ResponseEntity<Page<CatalogItemResponse>> getProviderStore(
-            @PathVariable Long providerId,
-            @RequestParam(required = false) String category, // Filtro opcional: "SALUD" vs "BELLEZA"
-            @PageableDefault(size = 20) Pageable pageable
-    ) {
-        return ResponseEntity.ok(service.getProviderCatalog(providerId, category, pageable));
-    }
-
-    /**
-     * Buscador de Texto (Google-like) DENTRO de la tienda de un doctor.
+     * 🔍 BUSCADOR GLOBAL (Texto).
+     * Busca por nombre o tags dentro del catálogo de un proveedor específico o global (si ajustamos el service).
+     * Por ahora el service pide providerId, así que lo usamos como "Buscador dentro de la tienda del Dr. X".
      */
     @GetMapping("/provider/{providerId}/search")
     public ResponseEntity<Page<CatalogItemResponse>> searchInStore(
@@ -122,22 +119,31 @@ public class CatalogController {
             @RequestParam String q,
             @PageableDefault(size = 20) Pageable pageable
     ) {
-        return ResponseEntity.ok(service.searchGlobal(providerId, q, pageable));
+        return ResponseEntity.ok(catalogService.searchGlobal(providerId, q, pageable));
     }
 
-    // ==========================================
-    // 🛠️ HELPERS
-    // ==========================================
-
     /**
-     * Extrae el ID del usuario desde el Token JWT.
-     * Gracias al JwtAuthenticationFilter, el 'principal' es el ID (Long).
+     * 🏪 TIENDA DEL DOCTOR (Perfil Público).
+     * Lista todos los servicios de un doctor, con filtro opcional por categoría.
      */
-    private Long getCurrentUserId() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null || !authentication.isAuthenticated()) {
-            throw new SecurityException("Usuario no autenticado");
+    @GetMapping("/provider/{providerId}/items")
+    public ResponseEntity<Page<CatalogItemResponse>> getProviderStore(
+            @PathVariable Long providerId,
+            @RequestParam(required = false) String category, // Ej: "CONSULTA", "SUPLEMENTOS"
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable
+    ) {
+        return ResponseEntity.ok(catalogService.getProviderCatalog(providerId, category, pageable));
+    }
+
+    // ========================================================================
+    // 🛠️ UTILS
+    // ========================================================================
+
+    private CustomAuthenticationToken getSession() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth instanceof CustomAuthenticationToken) {
+            return (CustomAuthenticationToken) auth;
         }
-        return (Long) authentication.getPrincipal();
+        throw new SecurityException("Sesión no válida o expirada.");
     }
 }

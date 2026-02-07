@@ -19,7 +19,7 @@ import java.util.Optional;
 public interface CatalogItemRepository extends JpaRepository<CatalogItem, Long>, JpaSpecificationExecutor<CatalogItem> {
 
     // ==========================================
-    // 🔍 1. BÚSQUEDAS BÁSICAS (Admin/Provider)
+    // 🔍 1. BÚSQUEDAS BÁSICAS Y VALIDACIONES
     // ==========================================
 
     /**
@@ -28,9 +28,16 @@ public interface CatalogItemRepository extends JpaRepository<CatalogItem, Long>,
     Page<CatalogItem> findAllByProviderId(Long providerId, Pageable pageable);
 
     /**
-     * Validación: Evitar duplicados de nombre para un mismo doctor.
+     * Validación: Evitar duplicados de nombre para un mismo doctor (excluyendo archivados).
      */
     boolean existsByProviderIdAndNameAndStatusNot(Long providerId, String name, ItemStatus status);
+
+    /**
+     * ✅ CONTEO PARA LÍMITES DE PLAN (NUEVO)
+     * Cuenta cuántos items de cierto tipo tiene el doctor, ignorando los archivados.
+     * Ejemplo: "Cuántos SERVICIOS activos o pausados tiene el Dr. House".
+     */
+    long countByProviderIdAndTypeAndStatusNot(Long providerId, ItemType type, ItemStatus status);
 
     /**
      * Búsqueda por SKU (Código de Inventario).
@@ -67,7 +74,7 @@ public interface CatalogItemRepository extends JpaRepository<CatalogItem, Long>,
      * Busca coincidencias en:
      * 1. Nombre (ILIKE - Insensitive)
      * 2. Descripción (ILIKE)
-     * 3. Tags de Búsqueda (Array overlap) - ¡Innovación!
+     * 3. Tags de Búsqueda (Array overlap)
      */
     @Query(value = """
         SELECT * FROM catalog_items c
@@ -90,7 +97,7 @@ public interface CatalogItemRepository extends JpaRepository<CatalogItem, Long>,
     /**
      * Búsqueda "Cerca de mí" usando PostGIS Nativo.
      * Utiliza el tipo 'geography' para cálculos precisos sobre la curvatura de la Tierra.
-     * * @param lat Latitud del usuario
+     * @param lat Latitud del usuario
      * @param lng Longitud del usuario
      * @param radiusKm Radio de búsqueda en Kilómetros
      * @return Ítems ordenados del más cercano al más lejano.
@@ -121,7 +128,6 @@ public interface CatalogItemRepository extends JpaRepository<CatalogItem, Long>,
 
     /**
      * Búsqueda por Rango de Precios y Rating.
-     * Útil para filtros avanzados: "Menos de $500 y con 4 estrellas o más".
      */
     @Query("SELECT c FROM CatalogItem c WHERE c.providerId = :providerId " +
             "AND c.status = 'ACTIVE' " +
@@ -135,7 +141,6 @@ public interface CatalogItemRepository extends JpaRepository<CatalogItem, Long>,
 
     /**
      * Búsqueda Profunda en Metadata (JSONB).
-     * Ej: Buscar productos que tengan cierta característica técnica.
      * Syntax '??' es el operador de existencia de llave en JSONB de Postgres.
      */
     @Query(value = "SELECT * FROM catalog_items WHERE provider_id = :providerId AND metadata ?? :jsonKey", nativeQuery = true)
