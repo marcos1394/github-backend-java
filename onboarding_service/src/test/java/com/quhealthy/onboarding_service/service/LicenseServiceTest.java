@@ -53,7 +53,7 @@ class LicenseServiceTest {
     @InjectMocks
     private LicenseService licenseService;
 
-    // Constantes
+    // Constantes de prueba
     private static final Long USER_ID = 200L;
     private static final String FILE_KEY = "providers/200/LICENSE-cedula.jpg";
     private static final String PROFILE_NAME = "Dr. Juan Pérez López";
@@ -80,7 +80,8 @@ class LicenseServiceTest {
                 "numero_cedula", "12345678",
                 "nombre_titular", "JUAN PEREZ LOPEZ", // Coincide con el perfil
                 "profesion", "MEDICO CIRUJANO",
-                "institucion", "UNAM"
+                "institucion", "UNAM",
+                "anio_registro", 2015
         );
         when(geminiKycService.extractLicenseData(any())).thenReturn(aiResponse);
 
@@ -104,14 +105,15 @@ class LicenseServiceTest {
         ArgumentCaptor<ProfessionalLicense> licenseCaptor = ArgumentCaptor.forClass(ProfessionalLicense.class);
         verify(licenseRepository).save(licenseCaptor.capture());
         assertThat(licenseCaptor.getValue().isVerified()).isTrue();
+        assertThat(licenseCaptor.getValue().getYearIssued()).isEqualTo(2015);
 
         // Verificar estatus global COMPLETED
         ArgumentCaptor<ProviderOnboarding> statusCaptor = ArgumentCaptor.forClass(ProviderOnboarding.class);
         verify(onboardingStatusRepository).save(statusCaptor.capture());
         assertThat(statusCaptor.getValue().getLicenseStatus()).isEqualTo(OnboardingStatus.COMPLETED);
 
-        // Verificar evento de ÉXITO
-        verify(eventPublisher).publishStepCompleted(eq(USER_ID), isNull(), eq("LICENSE"), anyMap());
+        // ✅ VERIFICACIÓN CRÍTICA: Evento LICENSE_COMPLETED
+        verify(eventPublisher).publishStepCompleted(eq(USER_ID), isNull(), eq("LICENSE_COMPLETED"), anyMap());
     }
 
     // =========================================================================
@@ -141,8 +143,8 @@ class LicenseServiceTest {
         assertThat(response.getStatus()).isEqualTo("REJECTED");
         assertThat(response.getRejectionReason()).contains("ilegible");
 
-        // Verificar estatus global ACTION_REQUIRED
-        verify(eventPublisher).publishStepRejected(eq(USER_ID), isNull(), eq("LICENSE"), contains("ilegible"));
+        // ✅ VERIFICACIÓN CRÍTICA: Evento LICENSE_REJECTED
+        verify(eventPublisher).publishStepRejected(eq(USER_ID), isNull(), eq("LICENSE_REJECTED"), contains("ilegible"));
     }
 
     // =========================================================================
@@ -177,12 +179,15 @@ class LicenseServiceTest {
 
         // THEN
         assertThat(response.getStatus()).isEqualTo("REJECTED");
-        assertThat(response.getRejectionReason()).contains("nombre en la cédula no coincide");
+        assertThat(response.getRejectionReason()).contains("no coincide");
 
         // Verificar que se guardó en BD como NO VERIFICADO
         ArgumentCaptor<ProfessionalLicense> captor = ArgumentCaptor.forClass(ProfessionalLicense.class);
         verify(licenseRepository).save(captor.capture());
         assertThat(captor.getValue().isVerified()).isFalse();
+
+        // Verificar evento de rechazo
+        verify(eventPublisher).publishStepRejected(eq(USER_ID), isNull(), eq("LICENSE_REJECTED"), anyString());
     }
 
     // =========================================================================

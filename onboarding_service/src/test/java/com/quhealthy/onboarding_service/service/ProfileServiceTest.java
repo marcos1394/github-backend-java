@@ -15,6 +15,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,7 +42,9 @@ class ProfileServiceTest {
     private static final Long USER_ID = 100L;
     private static final String BUSINESS_NAME = "Consultorio Dr. House";
     private static final String BIO = "Especialista en diagnóstico diferencial.";
-    private static final String EXPECTED_SLUG = "consultorio-dr-house-" + USER_ID;
+
+    // NOTA: Como el servicio usa UUID aleatorio, validaremos que empiece con esto:
+    private static final String EXPECTED_SLUG_PREFIX = "consultorio-dr-house-";
 
     @Test
     @DisplayName("Debe CREAR un perfil nuevo y generar Slug si el usuario no existe")
@@ -63,7 +66,9 @@ class ProfileServiceTest {
 
         ProviderProfile savedProfile = profileCaptor.getValue();
         assertThat(savedProfile.getBusinessName()).isEqualTo(BUSINESS_NAME);
-        assertThat(savedProfile.getSlug()).isEqualTo(EXPECTED_SLUG); // Validación clave del slug
+
+        // ✅ CORRECCIÓN SLUG: Usamos startsWith porque el sufijo es aleatorio
+        assertThat(savedProfile.getSlug()).startsWith(EXPECTED_SLUG_PREFIX);
         assertThat(savedProfile.getWebsiteUrl()).isEqualTo("https://drhouse.com");
         assertThat(savedProfile.getProviderId()).isEqualTo(USER_ID);
 
@@ -75,8 +80,17 @@ class ProfileServiceTest {
         assertThat(savedStatus.getProfileStatus()).isEqualTo(OnboardingStatus.COMPLETED);
         assertThat(savedStatus.getKycStatus()).isEqualTo(OnboardingStatus.PENDING); // Debe desbloquear el siguiente paso
 
-        // 3. Verificar publicación de evento
-        verify(eventPublisher).publishStepCompleted(eq(USER_ID), isNull(), eq("PROFILE"), anyMap());
+        // 3. ✅ VERIFICACIÓN DE EVENTO RICO (Sincronización)
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> mapCaptor = ArgumentCaptor.forClass(Map.class);
+
+        // Verificamos el nombre del evento actualizado: "PROFILE_COMPLETED"
+        verify(eventPublisher).publishStepCompleted(eq(USER_ID), isNull(), eq("PROFILE_COMPLETED"), mapCaptor.capture());
+
+        Map<String, Object> syncData = mapCaptor.getValue();
+        assertThat(syncData).containsEntry("businessName", BUSINESS_NAME);
+        assertThat(syncData).containsKey("slug"); // Debe llevar el slug
+        assertThat(syncData).containsEntry("bio", BIO);
     }
 
     @Test
@@ -113,7 +127,9 @@ class ProfileServiceTest {
 
         ProviderProfile updatedProfile = profileCaptor.getValue();
         assertThat(updatedProfile.getBusinessName()).isEqualTo("Nuevo Nombre Consultorio"); // Se actualizó el nombre
-        assertThat(updatedProfile.getSlug()).isEqualTo("viejo-nombre-slug"); // EL SLUG NO DEBE CAMBIAR (SEO Friendly)
+
+        // ✅ VALIDACIÓN CRÍTICA SEO: El slug NO cambió a pesar del cambio de nombre
+        assertThat(updatedProfile.getSlug()).isEqualTo("viejo-nombre-slug");
 
         // 2. Verificar Status
         ArgumentCaptor<ProviderOnboarding> statusCaptor = ArgumentCaptor.forClass(ProviderOnboarding.class);
@@ -121,7 +137,11 @@ class ProfileServiceTest {
 
         ProviderOnboarding updatedStatus = statusCaptor.getValue();
         assertThat(updatedStatus.getProfileStatus()).isEqualTo(OnboardingStatus.COMPLETED);
-        assertThat(updatedStatus.getKycStatus()).isEqualTo(OnboardingStatus.IN_PROGRESS); // NO debe resetearse a PENDING si ya estaba avanzado
+        assertThat(updatedStatus.getKycStatus()).isEqualTo(OnboardingStatus.IN_PROGRESS);
+
+        // 3. Verificar Evento de Sincronización
+        // Aunque el slug no cambie, debemos enviar los datos nuevos (nombre nuevo + slug viejo)
+        verify(eventPublisher).publishStepCompleted(eq(USER_ID), isNull(), eq("PROFILE_COMPLETED"), anyMap());
     }
 
     // --- Helper para crear Request Dummy ---

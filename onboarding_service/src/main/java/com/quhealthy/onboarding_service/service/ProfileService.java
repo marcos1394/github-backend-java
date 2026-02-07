@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -24,13 +25,15 @@ public class ProfileService {
     private final ProviderOnboardingRepository onboardingStatusRepository;
     private final ProviderProfileRepository profileDataRepository;
     private final OnboardingEventPublisher eventPublisher;
+
+    // Slugify thread-safe instance
     private final Slugify slugify = Slugify.builder().build();
 
     @Transactional
     public void updateProfile(Long userId, UpdateProfileRequest request) {
         log.info("📝 Actualizando perfil para proveedor ID: {}", userId);
 
-        // 1. UPSERT DATOS CORE (Si no existe, lo crea)
+        // 1. UPSERT DATOS CORE
         ProviderProfile profile = profileDataRepository.findById(userId)
                 .orElse(ProviderProfile.builder().providerId(userId).build());
 
@@ -44,7 +47,7 @@ public class ProfileService {
         profile.setCategoryId(request.getCategoryId());
         profile.setSubCategoryId(request.getSubCategoryId());
 
-        // ✅ NUEVOS CAMPOS (Que agregamos al DTO y Modelo)
+        // Campos de contacto adicionales
         profile.setWebsiteUrl(request.getWebsiteUrl());
         profile.setContactPhone(request.getContactPhone());
 
@@ -52,34 +55,47 @@ public class ProfileService {
             profile.setGooglePlaceId(request.getPlaceId());
         }
 
-        // Generación de Slug único
+        // 2. GENERACIÓN DE SLUG (Crítico para URLs amigables)
+        // Si no tiene slug o cambió el nombre del negocio, regeneramos
         if (profile.getSlug() == null || profile.getSlug().isEmpty()) {
             String baseSlug = slugify.slugify(request.getBusinessName());
-            // Verificación simple de unicidad agregando ID
-            profile.setSlug(baseSlug + "-" + userId);
+            // Agregamos una parte aleatoria corta para garantizar unicidad global sin consultar DB remota
+            // Ej: "clinica-dental-sonrisas-a1b2"
+            String uniqueSuffix = UUID.randomUUID().toString().substring(0, 4);
+            profile.setSlug(baseSlug + "-" + uniqueSuffix);
         }
 
         profileDataRepository.save(profile);
 
-        // 2. ACTUALIZAR ESTADO
+        // 3. ACTUALIZAR ESTADO LOCAL
         ProviderOnboarding status = onboardingStatusRepository.findById(userId)
                 .orElse(ProviderOnboarding.builder().providerId(userId).build());
 
         status.setProfileStatus(OnboardingStatus.COMPLETED);
 
-        // Si KYC no ha empezado, aseguramos que esté PENDING (desbloqueado)
+        // Si KYC no ha empezado, desbloqueamos el paso
         if (status.getKycStatus() == null) {
             status.setKycStatus(OnboardingStatus.PENDING);
         }
 
         onboardingStatusRepository.save(status);
 
-        // 3. PUBLICAR EVENTO (Notification Service enviará email de bienvenida/avance)
-        Map<String, Object> extraData = new HashMap<>();
-        extraData.put("businessName", request.getBusinessName());
+        // 4. PUBLICAR EVENTO DE SINCRONIZACIÓN 🔄
+        // Enviamos TODOS los datos que el Auth Service necesita replicar en su tabla 'providers'
+        Map<String, Object> syncData = new HashMap<>();
+        syncData.put("businessName", profile.getBusinessName());
+        syncData.put("slug", profile.getSlug());
+        syncData.put("bio", profile.getBio());
+        syncData.put("profileImageUrl", profile.getProfileImageUrl());
+        syncData.put("address", profile.getAddress());
+        syncData.put("latitude", profile.getLatitude());
+        syncData.put("longitude", profile.getLongitude());
+        syncData.put("categoryId", profile.getCategoryId());
+        syncData.put("subCategoryId", profile.getSubCategoryId());
 
-        eventPublisher.publishStepCompleted(userId, null, "PROFILE", extraData);
+        // Este evento dispara la actualización en Auth Service y notifica al usuario
+        eventPublisher.publishStepCompleted(userId, null, "PROFILE_COMPLETED", syncData);
 
-        log.info("✅ Perfil completado para ID: {}", userId);
+        log.info("✅ Perfil completado y evento de sincronización enviado para ID: {}", userId);
     }
 }

@@ -36,19 +36,17 @@ public class KycService {
     public KycDocumentResponse uploadAndVerifyDocument(Long userId, MultipartFile file, DocumentType docType) {
         log.info("Procesando documento tipo {} para usuario {}", docType, userId);
 
-        // 1. Subir el archivo (Sea Selfie o Documento, necesitamos guardarlo)
+        // 1. Subir archivo
         String fileKey = storageService.uploadFile(file, userId, docType.name());
 
         Map<String, Object> iaResult;
         VerificationStatus docStatus = VerificationStatus.PENDING;
         String rejectionReason = null;
 
-        // 2. BIFURCACIÓN DE LÓGICA (OCR vs BIOMETRÍA)
+        // 2. Lógica IA (Sin cambios, tu lógica es sólida)
         if (docType == DocumentType.SELFIE) {
-            // === RUTA A: PRUEBA DE VIDA ===
             try {
                 iaResult = processLivenessCheck(userId, file);
-
                 Boolean isSamePerson = (Boolean) iaResult.getOrDefault("is_same_person", false);
                 String liveness = (String) iaResult.getOrDefault("liveness_check", "FAILED");
 
@@ -57,37 +55,33 @@ public class KycService {
                 } else {
                     docStatus = VerificationStatus.REJECTED;
                     rejectionReason = "La prueba de vida falló: El rostro no coincide o no es una foto en vivo.";
-                    // Notificar rechazo
+                    // Notificar rechazo específico
                     eventPublisher.publishStepRejected(userId, null, "KYC_BIOMETRICS", rejectionReason);
                 }
             } catch (Exception e) {
-                // Si falla (ej: no ha subido INE antes), marcamos como error
                 docStatus = VerificationStatus.REJECTED;
                 rejectionReason = e.getMessage();
                 iaResult = Map.of("error", e.getMessage());
             }
-
         } else {
-            // === RUTA B: DOCUMENTO OFICIAL (OCR) ===
             iaResult = geminiKycService.extractIdentityData(file, docType.name());
-
             Boolean esLegible = (Boolean) iaResult.getOrDefault("es_legible", false);
             Boolean pareceAlterado = (Boolean) iaResult.getOrDefault("parece_alterado", false);
 
             if (Boolean.FALSE.equals(esLegible)) {
                 docStatus = VerificationStatus.REJECTED;
-                rejectionReason = "El documento no es legible o está borroso.";
+                rejectionReason = "El documento no es legible.";
                 eventPublisher.publishStepRejected(userId, null, "KYC_DOCUMENT", rejectionReason);
             } else if (Boolean.TRUE.equals(pareceAlterado)) {
                 docStatus = VerificationStatus.REJECTED;
-                rejectionReason = "El sistema detectó posibles alteraciones digitales.";
+                rejectionReason = "Posible alteración digital detectada.";
                 eventPublisher.publishStepRejected(userId, null, "KYC_SECURITY", rejectionReason);
             } else {
                 docStatus = VerificationStatus.APPROVED;
             }
         }
 
-        // 3. Guardar o Actualizar en BD
+        // 3. Guardar Documento
         ProviderDocument doc = documentRepository.findByProviderIdAndDocumentType(userId, docType)
                 .orElse(ProviderDocument.builder().providerId(userId).documentType(docType).build());
 
@@ -96,16 +90,15 @@ public class KycService {
         doc.setVerificationStatus(docStatus);
         doc.setRejectionReason(rejectionReason);
         doc.setVerifiedAt(LocalDateTime.now());
-
         documentRepository.save(doc);
 
-        // 4. Actualizar Estado Global del Onboarding
+        // 4. Actualizar Estado Global (CRÍTICO PARA EL TOKEN)
         updateGlobalKycStatus(userId);
 
-        // 5. Retornar Respuesta
+        // 5. Respuesta
         return KycDocumentResponse.builder()
                 .documentType(docType.name())
-                .verificationStatus(docStatus.name()) // Asegúrate que tu DTO use este nombre
+                .verificationStatus(docStatus.name())
                 .rejectionReason(rejectionReason)
                 .extractedData(iaResult)
                 .fileUrl(storageService.getPresignedUrl(fileKey))
@@ -113,64 +106,64 @@ public class KycService {
                 .build();
     }
 
-    /**
-     * Lógica auxiliar para comparar Selfie vs INE almacenada.
-     */
     private Map<String, Object> processLivenessCheck(Long userId, MultipartFile selfieFile) {
-        // A. Buscar el documento de referencia (INE Frente o Pasaporte)
-        // La lógica es: "Dame la INE aprobada". Si no hay, busca "Pasaporte aprobado".
         ProviderDocument refDoc = documentRepository.findByProviderIdAndDocumentType(userId, DocumentType.INE_FRONT)
                 .or(() -> documentRepository.findByProviderIdAndDocumentType(userId, DocumentType.PASSPORT))
-                .orElseThrow(() -> new IllegalArgumentException("Debes subir y aprobar tu identificación oficial antes de tomar la selfie."));
+                .orElseThrow(() -> new IllegalArgumentException("Debes aprobar tu identificación oficial antes de la selfie."));
 
         if (refDoc.getVerificationStatus() != VerificationStatus.APPROVED) {
-            throw new IllegalArgumentException("Tu identificación está en revisión o fue rechazada. No puedes avanzar a la selfie aún.");
+            throw new IllegalArgumentException("Tu identificación no está aprobada. No puedes subir selfie aún.");
         }
-
-        // B. Descargar los bytes de la imagen de referencia (usando el método nuevo del StorageService)
         byte[] idImageBytes = storageService.getFileBytes(refDoc.getFileKey());
-
-        // C. Llamar a Gemini para comparar
         return geminiKycService.verifyBiometricMatch(selfieFile, idImageBytes);
     }
 
+    /**
+     * Calcula el estado global y emite el evento para que Auth Service se entere.
+     */
     private void updateGlobalKycStatus(Long userId) {
-        // Verificar si hay algún rechazo activo
         boolean hasRejectedDocs = documentRepository.findAllByProviderId(userId).stream()
                 .anyMatch(d -> d.getVerificationStatus() == VerificationStatus.REJECTED);
 
-        ProviderOnboarding status = onboardingStatusRepository.findById(userId)
+        ProviderOnboarding onboarding = onboardingStatusRepository.findById(userId)
                 .orElse(ProviderOnboarding.builder().providerId(userId).build());
 
-        if (hasRejectedDocs) {
-            status.setKycStatus(OnboardingStatus.ACTION_REQUIRED);
-        } else {
-            // Verificar completitud mínima para MVP:
-            // Debe tener al menos (INE_FRONT + SELFIE) ó (PASSPORT + SELFIE) aprobados
-            boolean hasId = documentRepository.findByProviderIdAndDocumentType(userId, DocumentType.INE_FRONT)
-                    .map(d -> d.getVerificationStatus() == VerificationStatus.APPROVED)
-                    .orElse(false)
-                    || documentRepository.findByProviderIdAndDocumentType(userId, DocumentType.PASSPORT)
-                    .map(d -> d.getVerificationStatus() == VerificationStatus.APPROVED)
-                    .orElse(false);
+        // Variable para determinar qué string mandar al Auth Service ("APPROVED", "REJECTED", "PENDING")
+        String authKycStatus;
 
-            boolean hasSelfie = documentRepository.findByProviderIdAndDocumentType(userId, DocumentType.SELFIE)
-                    .map(d -> d.getVerificationStatus() == VerificationStatus.APPROVED)
-                    .orElse(false);
+        if (hasRejectedDocs) {
+            onboarding.setKycStatus(OnboardingStatus.ACTION_REQUIRED);
+            authKycStatus = "REJECTED"; // O "ACTION_REQUIRED" si Auth lo soporta
+        } else {
+            boolean hasId = checkApproved(userId, DocumentType.INE_FRONT) || checkApproved(userId, DocumentType.PASSPORT);
+            boolean hasSelfie = checkApproved(userId, DocumentType.SELFIE);
 
             if (hasId && hasSelfie) {
-                status.setKycStatus(OnboardingStatus.COMPLETED);
+                onboarding.setKycStatus(OnboardingStatus.COMPLETED);
+                authKycStatus = "APPROVED"; // ✅ ¡Esto es lo que busca el Token!
 
-                // 🔥 NOTIFICACIÓN GLOBAL: KYC Exitoso
-                Map<String, Object> emailData = new HashMap<>();
-                emailData.put("kycVerified", true);
-                eventPublisher.publishStepCompleted(userId, null, "KYC", emailData);
+                // 🔥 EVENTO CRÍTICO:
+                // Notificamos que el usuario ya es confiable.
+                // El consumidor de este evento (Auth Service o Worker) debe hacer:
+                // UPDATE providers SET kyc_status = 'APPROVED' WHERE id = userId
+                Map<String, Object> eventData = new HashMap<>();
+                eventData.put("kycVerified", true);
+                eventData.put("finalStatus", authKycStatus);
+
+                eventPublisher.publishStepCompleted(userId, null, "KYC_COMPLETED", eventData);
+
             } else {
-                // Aún no acaba, sigue en progreso
-                status.setKycStatus(OnboardingStatus.IN_PROGRESS);
+                onboarding.setKycStatus(OnboardingStatus.IN_PROGRESS);
+                authKycStatus = "PENDING";
             }
         }
+        onboardingStatusRepository.save(onboarding);
+    }
 
-        onboardingStatusRepository.save(status);
+    // Helper simple
+    private boolean checkApproved(Long userId, DocumentType type) {
+        return documentRepository.findByProviderIdAndDocumentType(userId, type)
+                .map(d -> d.getVerificationStatus() == VerificationStatus.APPROVED)
+                .orElse(false);
     }
 }

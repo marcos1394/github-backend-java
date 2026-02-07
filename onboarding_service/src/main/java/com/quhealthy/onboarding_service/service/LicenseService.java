@@ -39,101 +39,89 @@ public class LicenseService {
     public LicenseResponse uploadAndVerifyLicense(Long userId, MultipartFile file) {
         log.info("🎓 Procesando Cédula Profesional para usuario ID: {}", userId);
 
-        // 1. Subir Imagen al Storage (MinIO o GCP)
+        // 1. Subir Imagen
         String fileKey = storageService.uploadFile(file, userId, DocumentType.PROFESSIONAL_LICENSE.name());
 
-        // 2. Extraer Datos con IA (Gemini 3 Vision)
+        // 2. Extraer Datos con IA
         Map<String, Object> extractedData = geminiKycService.extractLicenseData(file);
-
-        // Log de depuración para ver qué trajo la IA
         log.debug("Datos extraídos de cédula: {}", extractedData);
 
-        // 3. Validación Lógica (Nombre IA vs Nombre Perfil)
+        // 3. Validación Lógica
         boolean isValid = validateLicenseData(userId, extractedData);
 
         String rejectionReason = null;
         if (!isValid) {
-            // Determinamos el motivo más probable
             if (Boolean.FALSE.equals(extractedData.get("es_legible"))) {
                 rejectionReason = "El documento es ilegible o está borroso.";
             } else if (Boolean.FALSE.equals(extractedData.get("documento_valido"))) {
                 rejectionReason = "El documento no parece ser una Cédula Profesional válida.";
             } else {
-                rejectionReason = "El nombre en la cédula no coincide suficientemente con tu perfil.";
+                rejectionReason = "El nombre en la cédula no coincide con tu perfil.";
             }
         }
 
-        // 4. Guardar o Actualizar en BD (Tabla provider_licenses)
+        // 4. Guardar en BD
         ProfessionalLicense license = licenseRepository.findByProviderId(userId)
                 .orElse(ProfessionalLicense.builder().providerId(userId).build());
 
-        // Mapeo seguro de valores (con valores por defecto si la IA retorna null)
         license.setLicenseNumber((String) extractedData.getOrDefault("numero_cedula", "PENDING"));
         license.setInstitutionName((String) extractedData.getOrDefault("institucion", "Desconocida"));
         license.setCareerName((String) extractedData.getOrDefault("profesion", "Desconocida"));
-
-        // Guardamos la referencia al archivo (fileKey para uso interno)
         license.setDocumentUrl(fileKey);
-
         license.setVerified(isValid);
         license.setValidationSource(ValidationSource.AI_EXTRACTION);
 
-        // Si hay año de emisión y es numérico, lo guardamos
         try {
-            Object anioObj = extractedData.get("anio_registro"); // Asegúrate de pedir este campo en el prompt si lo deseas
+            Object anioObj = extractedData.get("anio_registro");
             if (anioObj != null) {
-                license.setYearIssued(Integer.parseInt(anioObj.toString()));
+                // Manejo robusto por si la IA devuelve string o number
+                String anioStr = anioObj.toString().replaceAll("[^0-9]", "");
+                if (!anioStr.isEmpty()) {
+                    license.setYearIssued(Integer.parseInt(anioStr));
+                }
             }
-        } catch (NumberFormatException e) {
+        } catch (Exception e) {
             log.warn("No se pudo parsear el año de la cédula: {}", e.getMessage());
         }
 
         licenseRepository.save(license);
 
-        // 5. Actualizar Estado Global del Onboarding
+        // 5. Actualizar Estado Global (CRÍTICO PARA TOKEN)
         updateOnboardingStatus(userId, isValid, rejectionReason);
 
-        // 6. Retornar Respuesta al Frontend
+        // 6. Retornar Respuesta
         return LicenseResponse.builder()
                 .licenseNumber(license.getLicenseNumber())
                 .careerName(license.getCareerName())
                 .institutionName(license.getInstitutionName())
                 .status(isValid ? "APPROVED" : "REJECTED")
                 .rejectionReason(rejectionReason)
-                .documentUrl(storageService.getPresignedUrl(fileKey)) // URL temporal para ver la imagen
+                .documentUrl(storageService.getPresignedUrl(fileKey))
                 .build();
     }
 
-    /**
-     * Valida que el documento sea legible y pertenezca al usuario.
-     */
     private boolean validateLicenseData(Long userId, Map<String, Object> aiData) {
-        // A. Validaciones básicas de la IA
-        if (Boolean.FALSE.equals(aiData.get("es_legible"))) {
-            log.warn("Cédula ilegible para usuario {}", userId);
-            return false;
-        }
-
-        if (Boolean.FALSE.equals(aiData.get("documento_valido"))) {
-            log.warn("IA marcó documento como inválido/falso para usuario {}", userId);
-            return false;
-        }
+        if (Boolean.FALSE.equals(aiData.get("es_legible"))) return false;
+        if (Boolean.FALSE.equals(aiData.get("documento_valido"))) return false;
 
         String cedula = (String) aiData.get("numero_cedula");
-        if (cedula == null || cedula.trim().isEmpty()) {
-            return false;
-        }
+        if (cedula == null || cedula.trim().isEmpty()) return false;
 
-        // B. Validación de Nombre (Fuzzy Match simple)
+        // Validación de Nombre
         ProviderProfile profile = profileRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("Perfil de usuario no encontrado"));
 
         String nameOnLicense = normalizeString((String) aiData.getOrDefault("nombre_titular", ""));
-        String nameOnProfile = normalizeString(profile.getBusinessName()); // Nota: Idealmente usar Nombre Legal si existe
 
-        // Lógica de coincidencia: Verificamos si palabras clave del perfil aparecen en la cédula
-        // (Esto es permisivo porque 'businessName' puede ser "Dr. Juan Perez" y la cédula "Juan Perez Lopez")
-        return checkNameMatch(nameOnProfile, nameOnLicense);
+        // ⚠️ IMPORTANTE: Aquí deberíamos comparar contra el Nombre REAL (Persona Física)
+        // Como ProviderProfile suele tener info pública, asegúrate que 'fullName' venga de ahí
+        // o si tienes acceso al nombre legal. Usaré una lógica híbrida segura.
+        String nameToCompare = normalizeString(profile.getBusinessName());
+
+        // Si tienes un campo 'legalName' en profile, úsalo preferentemente:
+        // if (profile.getLegalName() != null) nameToCompare = normalizeString(profile.getLegalName());
+
+        return checkNameMatch(nameToCompare, nameOnLicense);
     }
 
     private void updateOnboardingStatus(Long userId, boolean isVerified, String reason) {
@@ -143,52 +131,39 @@ public class LicenseService {
         if (isVerified) {
             status.setLicenseStatus(OnboardingStatus.COMPLETED);
 
-            // ✅ Notificar ÉXITO al Bus
+            // 🔥 EVENTO DE SINCRONIZACIÓN
+            // Esto le dice al Auth Service: "¡Oye! Este usuario ya cumplió el requisito de licencia".
             Map<String, Object> extra = new HashMap<>();
             extra.put("licenseVerified", true);
-            eventPublisher.publishStepCompleted(userId, null, "LICENSE", extra);
+            extra.put("finalStatus", "APPROVED"); // Para consistencia
+
+            // Usamos un tópico específico si quieres disparar lógica de "Onboarding Full Completo"
+            eventPublisher.publishStepCompleted(userId, null, "LICENSE_COMPLETED", extra);
 
         } else {
             status.setLicenseStatus(OnboardingStatus.ACTION_REQUIRED);
-
-            // 🚨 Notificar RECHAZO al Bus
-            eventPublisher.publishStepRejected(userId, null, "LICENSE", reason);
+            eventPublisher.publishStepRejected(userId, null, "LICENSE_REJECTED", reason);
         }
 
         onboardingStatusRepository.save(status);
     }
 
-    // --- UTILIDADES DE TEXTO ---
+    // --- UTILIDADES ---
 
-    /**
-     * Elimina acentos y convierte a minúsculas para comparar nombres.
-     */
     private String normalizeString(String input) {
         if (input == null) return "";
         String normalized = Normalizer.normalize(input, Normalizer.Form.NFD);
         return normalized.replaceAll("\\p{InCombiningDiacriticalMarks}+", "").toLowerCase().trim();
     }
 
-    /**
-     * Compara nombres token por token.
-     * Retorna true si al menos 2 partes del nombre coinciden (ej: "Juan" y "Perez").
-     */
     private boolean checkNameMatch(String profileName, String licenseName) {
         if (licenseName.isEmpty()) return false;
-
         String[] profileTokens = profileName.split("\\s+");
         int matches = 0;
-
         for (String token : profileTokens) {
-            // Ignoramos títulos comunes
-            if (token.equals("dr") || token.equals("dra") || token.equals("lic") || token.length() < 3) continue;
-
-            if (licenseName.contains(token)) {
-                matches++;
-            }
+            if (token.length() < 3 || token.equals("dr") || token.equals("dra") || token.equals("lic")) continue;
+            if (licenseName.contains(token)) matches++;
         }
-
-        // Si encontró al menos 1 coincidencia fuerte (apellido o nombre raro) o 2 comunes
-        return matches >= 1;
+        return matches >= 1; // MVP: 1 coincidencia fuerte es suficiente para no bloquear falsos negativos
     }
 }

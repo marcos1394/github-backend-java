@@ -11,7 +11,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.NonNull;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
@@ -50,7 +49,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         jwt = authHeader.substring(7);
 
         try {
-            // 2. Parsear el Token y Verificar Firma (Base64)
+            // 2. Parsear el Token y Verificar Firma
             byte[] keyBytes = Decoders.BASE64.decode(secretKey);
             Key key = Keys.hmacShaKeyFor(keyBytes);
 
@@ -62,35 +61,52 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
             userEmail = claims.getSubject();
 
-            // 3. Extraer ID y ROL de manera segura
-            // IMPORTANTE: Este ID es vital para ligar el perfil de onboarding con el usuario autenticado
+            // 3. Extraer Datos Enriquecidos (El Pasaporte Digital) 🛂
+
+            // A. ID de Usuario
             Long userId = null;
             if (claims.get("id") != null) {
-                // Casteo seguro para evitar ClassCastException (Integer vs Long)
                 userId = ((Number) claims.get("id")).longValue();
             }
 
+            // B. Plan ID
+            Long planId = 5L;
+            if (claims.get("planId") != null) {
+                planId = ((Number) claims.get("planId")).longValue();
+            }
+
+            // C. Estados de Onboarding y KYC
+            String onboardingStatus = claims.get("onboardingStatus", String.class);
+            if (onboardingStatus == null) onboardingStatus = "PENDING";
+
+            String kycStatus = claims.get("kycStatus", String.class);
+            if (kycStatus == null) kycStatus = "PENDING";
+
             String role = claims.get("role", String.class);
 
-            // 4. Establecer Autenticación en el Contexto de Spring Security
+            // 4. Establecer contexto de seguridad
             if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
 
                 List<SimpleGrantedAuthority> authorities = (role != null)
                         ? List.of(new SimpleGrantedAuthority("ROLE_" + role))
                         : Collections.emptyList();
 
-                // Creamos el token de autenticación
-                // El 'principal' es el userId (Long), no el email. Esto facilita el uso en Controllers.
-                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                        userId,
-                        null,
-                        authorities
+                // ✅ USAMOS EL TOKEN PERSONALIZADO
+                // Esto permite al OnboardingController saber en qué paso va el usuario
+                // sin consultar la BD en cada petición.
+                CustomAuthenticationToken authToken = new CustomAuthenticationToken(
+                        userId, // Principal
+                        null,   // Credentials
+                        authorities,
+                        planId,
+                        onboardingStatus,
+                        kycStatus
                 );
 
                 authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
 
                 SecurityContextHolder.getContext().setAuthentication(authToken);
-                log.debug("✅ Usuario autenticado en Onboarding Service: {}", userEmail);
+                log.debug("✅ Auth Onboarding: {} | Status: {} | KYC: {}", userEmail, onboardingStatus, kycStatus);
             }
         } catch (Exception e) {
             log.error("❌ Error validando JWT en Onboarding Service: {}", e.getMessage());
