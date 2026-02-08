@@ -33,7 +33,6 @@ jobs:
         GCP_BUCKET_NAME=quhealthy-catalog-images-prod
         STORAGE_PROVIDER=gcp
 
-      # ✅ 3. Secretos Reales (Secret Manager)
       # Mapeamos los secretos de GCP a las variables de entorno de Spring Boot
       env_secrets_mapping: |
         DB_URL=application_db_url:latest
