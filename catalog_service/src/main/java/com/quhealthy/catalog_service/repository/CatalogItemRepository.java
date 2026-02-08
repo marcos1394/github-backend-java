@@ -44,7 +44,6 @@ public interface CatalogItemRepository extends JpaRepository<CatalogItem, Long>,
     // 🧠 3. BÚSQUEDA INTELIGENTE (Texto + Tags)
     // ==========================================
 
-    // ✅ MEJORA: Agregado countQuery explícito para evitar errores de paginación
     @Query(value = """
         SELECT * FROM catalog_items c
         WHERE c.provider_id = :providerId
@@ -73,7 +72,6 @@ public interface CatalogItemRepository extends JpaRepository<CatalogItem, Long>,
     // 📍 4. GEOLOCALIZACIÓN (PostGIS Power) 🚀
     // ==========================================
 
-    // ✅ MEJORA: Agregado countQuery. Vital para consultas espaciales pesadas.
     @Query(value = """
         SELECT * FROM catalog_items c
         WHERE c.status = 'ACTIVE'
@@ -120,9 +118,8 @@ public interface CatalogItemRepository extends JpaRepository<CatalogItem, Long>,
                                                 Pageable pageable);
 
     /**
-     * ✅ CORRECCIÓN APLICADA: '??' escapa el operador '?' de PostgreSQL
-     * para que Hibernate no lo confunda con un parámetro.
+     * ✅ CORRECCIÓN FINAL: Usamos jsonb_exists para evitar conflicto de parsers en Spring.
      */
-    @Query(value = "SELECT * FROM catalog_items WHERE provider_id = :providerId AND metadata ?? :jsonKey", nativeQuery = true)
+    @Query(value = "SELECT * FROM catalog_items WHERE provider_id = :providerId AND jsonb_exists(metadata, :jsonKey)", nativeQuery = true)
     List<CatalogItem> findByMetadataKey(@Param("providerId") Long providerId, @Param("jsonKey") String jsonKey);
 }
