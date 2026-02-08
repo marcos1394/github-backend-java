@@ -30,6 +30,13 @@
     <dependencyManagement>
         <dependencies>
             <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-bom</artifactId>
+                <version>${grpc.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
                 <groupId>com.google.cloud</groupId>
                 <artifactId>spring-cloud-gcp-dependencies</artifactId>
                 <version>${spring-cloud-gcp.version}</version>
@@ -184,13 +191,7 @@
             <artifactId>protobuf-java-util</artifactId>
             <version>${protobuf.version}</version>
         </dependency>
-        <dependency>
-            <groupId>io.grpc</groupId>
-            <artifactId>grpc-bom</artifactId>
-            <version>${grpc.version}</version>
-            <type>pom</type>
-            <scope>import</scope>
-        </dependency>
+
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers</artifactId>
