@@ -2,7 +2,7 @@ package com.quhealthy.catalog_service.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.quhealthy.catalog_service.config.CustomAuthenticationToken;
-import com.quhealthy.catalog_service.config.TestConfig; // ✅ IMPORTANTE: Tu config de test
+import com.quhealthy.catalog_service.config.TestConfig;
 import com.quhealthy.catalog_service.model.StoreProfile;
 import com.quhealthy.catalog_service.service.CatalogService;
 import org.junit.jupiter.api.AfterEach;
@@ -11,12 +11,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.context.annotation.Import; // ✅ NECESARIO
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.test.context.ActiveProfiles; // ✅ NECESARIO
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
@@ -30,15 +30,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(StoreProfileController.class)
-@AutoConfigureMockMvc(addFilters = false) // Desactivamos filtros de seguridad para inyectar token manualmente
-@Import(TestConfig.class) // ✅ SOLUCIÓN AL ERROR: Cargamos el Bean de ObjectMapper y Mocks
-@ActiveProfiles("test")   // ✅ Aseguramos entorno de prueba
+@AutoConfigureMockMvc(addFilters = false) // Desactivamos filtros de Spring Security para inyectar token manualmente
+@Import(TestConfig.class) // ✅ 1. Carga ObjectMapper y Mocks de infraestructura
+@ActiveProfiles("test")   // ✅ 2. Asegura que lea application-test.yml
 class StoreProfileControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
 
-    @MockitoBean // Nueva anotación de Spring Boot 3.4+ (Reemplaza a @MockBean)
+    @MockitoBean // Spring Boot 3.4+ (Reemplaza a @MockBean)
     private CatalogService catalogService;
 
     @Autowired
@@ -72,7 +72,7 @@ class StoreProfileControllerTest {
                 .showLocation(true)
                 .build();
 
-        // El servicio retorna el objeto actualizado
+        // Mock del servicio retornando el objeto actualizado
         when(catalogService.updateStoreBranding(eq(PROVIDER_ID), any(StoreProfile.class)))
                 .thenReturn(requestProfile);
 
@@ -87,23 +87,19 @@ class StoreProfileControllerTest {
     }
 
     @Test
-    @DisplayName("PUT /me - Debe fallar si no hay token (SecurityException)")
+    @DisplayName("PUT /me - Debe fallar con 403 si no hay token (GlobalExceptionHandler)")
     void updateMyBranding_ShouldFail_WhenNoToken() throws Exception {
-        // GIVEN: NO llamamos a setupSecurityContext()
+        // GIVEN: NO llamamos a setupSecurityContext() (Sesión vacía)
         StoreProfile requestProfile = StoreProfile.builder().displayName("Hacker Store").build();
 
         // WHEN & THEN
-        // El controller lanza "SecurityException: Sesión no válida"
+        // El Controller lanza SecurityException -> GlobalExceptionHandler la atrapa -> Devuelve 403 Forbidden
         mockMvc.perform(put("/api/store/profile/me")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(requestProfile)))
-                .andExpect(status().isInternalServerError()) // O el error que tu ExceptionHandler maneje
-                .andExpect(result -> {
-                    if (result.getResolvedException() != null) {
-                        String msg = result.getResolvedException().getMessage();
-                        assert(msg.contains("Sesión no válida"));
-                    }
-                });
+                .andExpect(status().isForbidden()) // ✅ Esperamos 403, NO 500
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED")) // ✅ Validamos el código de error del DTO
+                .andExpect(jsonPath("$.message").value("Sesión no válida o expirada."));
     }
 
     // ========================================================================

@@ -2,6 +2,7 @@ package com.quhealthy.catalog_service.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.quhealthy.catalog_service.config.CustomAuthenticationToken;
+import com.quhealthy.catalog_service.config.TestConfig; // ✅ IMPORTANTE
 import com.quhealthy.catalog_service.dto.CatalogItemRequest;
 import com.quhealthy.catalog_service.dto.CatalogItemResponse;
 import com.quhealthy.catalog_service.model.enums.ItemStatus;
@@ -13,13 +14,15 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.context.annotation.Import; // ✅ NECESARIO
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.test.context.ActiveProfiles; // ✅ NECESARIO
+import org.springframework.test.context.bean.override.mockito.MockitoBean; // Spring Boot 3.4+
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -33,13 +36,15 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(CatalogController.class)
-@AutoConfigureMockMvc(addFilters = false) // ⚠️ Desactivamos filtros de seguridad estándar para inyectar nuestro token manualmente
+@AutoConfigureMockMvc(addFilters = false) // Desactivamos filtros de seguridad estándar
+@Import(TestConfig.class) // ✅ SOLUCIÓN AL ERROR: Cargamos ObjectMapper y Mocks
+@ActiveProfiles("test")   // ✅ Aseguramos entorno de prueba
 class CatalogControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
 
-    @MockitoBean
+    @MockitoBean // Reemplaza a @MockBean en nuevas versiones
     private CatalogService catalogService;
 
     @Autowired
@@ -52,7 +57,6 @@ class CatalogControllerTest {
 
     @AfterEach
     void tearDown() {
-        // Limpiar el contexto de seguridad después de cada test para no afectar a otros
         SecurityContextHolder.clearContext();
     }
 
@@ -71,6 +75,7 @@ class CatalogControllerTest {
                 .type(ItemType.SERVICE)
                 .price(new BigDecimal("500.00"))
                 .description("Limpieza profunda")
+                .category("SALUD") // ✅ AGREGADO: Campo obligatorio
                 .build();
 
         CatalogItemResponse mockResponse = CatalogItemResponse.builder()
@@ -102,6 +107,7 @@ class CatalogControllerTest {
                 .name("Consulta Actualizada")
                 .price(new BigDecimal("600.00"))
                 .type(ItemType.SERVICE)
+                .category("SALUD") // ✅ AGREGADO
                 .build();
 
         CatalogItemResponse mockResponse = CatalogItemResponse.builder()
@@ -153,25 +159,24 @@ class CatalogControllerTest {
     }
 
     @Test
-    @DisplayName("Debe fallar (403/500) si el token no es CustomAuthenticationToken")
+    @DisplayName("Debe fallar (403) si el token no es válido")
     void protectedEndpoint_ShouldFail_WhenTokenIsInvalid() throws Exception {
-        // NO llamamos a setupSecurityContext(), por lo que el contexto está vacío o es genérico.
-        // El controller lanzará SecurityException "Sesión no válida".
-        // Al tener addFilters=false, la excepción salta y Spring la maneja.
+        // GIVEN: Contexto de seguridad vacío (sin setupSecurityContext)
+        CatalogItemRequest request = CatalogItemRequest.builder()
+                .name("Test")
+                .type(ItemType.PRODUCT)
+                .price(BigDecimal.TEN) // ✅ AGREGADO
+                .category("GENERAL")   // ✅ AGREGADO
+                .build();
 
-        CatalogItemRequest request = CatalogItemRequest.builder().name("Test").type(ItemType.PRODUCT).build();
-
+        // WHEN & THEN
+        // ✅ CORRECCIÓN: El GlobalExceptionHandler ahora devuelve 403 Forbidden, no 500.
         mockMvc.perform(post("/api/catalog/items")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isInternalServerError()) // O el status que maneje tu GlobalExceptionHandler para SecurityException
-                .andExpect(result -> {
-                    // Verificamos que la causa fue la validación de sesión
-                    if (result.getResolvedException() != null) {
-                        String msg = result.getResolvedException().getMessage();
-                        assert(msg.contains("Sesión no válida"));
-                    }
-                });
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"))
+                .andExpect(jsonPath("$.message").value("Sesión no válida o expirada."));
     }
 
     // ========================================================================
@@ -194,8 +199,10 @@ class CatalogControllerTest {
     @Test
     @DisplayName("GET /nearby - Debe requerir lat/lng")
     void getNearby_ShouldFail_WhenParamsMissing() throws Exception {
+        // ✅ CORRECCIÓN: Validamos que el GlobalExceptionHandler devuelva 400 y el código correcto
         mockMvc.perform(get("/api/catalog/nearby"))
-                .andExpect(status().isBadRequest()); // Falta lat y lng
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MISSING_PARAMETER"));
     }
 
     @Test
@@ -235,10 +242,6 @@ class CatalogControllerTest {
     // 🛠️ HELPER: Configuración de Token
     // ========================================================================
 
-    /**
-     * Simula que un usuario Provider (con Plan ID 2) ha iniciado sesión.
-     * Esto llena el SecurityContext con el CustomAuthenticationToken que espera el Controller.
-     */
     private void setupSecurityContext() {
         CustomAuthenticationToken authToken = new CustomAuthenticationToken(
                 PROVIDER_ID, // Principal

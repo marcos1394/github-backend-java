@@ -1,0 +1,48 @@
+name: Catalog Service Pipeline 🚀
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'catalog_service/**'
+      - '.github/workflows/catalog-service.yml'
+  pull_request:
+    paths:
+      - 'catalog_service/**'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  call-workflow:
+    uses: ./.github/workflows/microservice-pipeline.yml
+    with:
+      service_name: catalog-service
+      directory: catalog_service
+      sonar_project_key: quhealthy-catalog-service
+
+      # ✅ 1. Seguridad: Service Account específica para Catalog
+      # Esta cuenta debe tener permisos de: Cloud SQL Client, Pub/Sub Publisher y Storage Object Admin
+      flags: '--service-account=sa-catalog@quhealthy-backend.iam.gserviceaccount.com'
+
+      # ✅ 2. Configuración: Variables NO secretas
+      # Definimos el Tópico donde publicamos (ITEM_CREATED, etc.) y el Bucket de imágenes
+      extra_env_vars: |
+        GCP_PUBSUB_TOPIC_CATALOG=catalog-events-topic
+        GCP_BUCKET_NAME=quhealthy-catalog-images-prod
+        STORAGE_PROVIDER=gcp
+
+      # ✅ 3. Secretos Reales (Secret Manager)
+      # Mapeamos los secretos de GCP a las variables de entorno de Spring Boot
+      env_secrets_mapping: |
+        DB_URL=application_db_url:latest
+        DB_USER=application_db_user:latest
+        DB_PASSWORD=application_db_password:latest
+        JWT_SECRET_KEY=application_jwt_secret:latest
+
+    secrets:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_SA_EMAIL: ${{ secrets.GCP_SA_EMAIL }}
+      GCP_WIF_PROVIDER: ${{ secrets.GCP_WIF_PROVIDER }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException; // ✅ NUEVO
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -23,7 +24,6 @@ public class GlobalExceptionHandler {
     // 1. Recurso no encontrado (404)
     @ExceptionHandler(EntityNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleNotFound(EntityNotFoundException ex, HttpServletRequest request) {
-        log.warn("Recurso no encontrado: {}", ex.getMessage());
         return buildResponse(HttpStatus.NOT_FOUND, "RESOURCE_NOT_FOUND", ex.getMessage(), request);
     }
 
@@ -34,8 +34,7 @@ public class GlobalExceptionHandler {
         for (FieldError error : ex.getBindingResult().getFieldErrors()) {
             errors.put(error.getField(), error.getDefaultMessage());
         }
-
-        log.warn("Error de validación en request: {}", errors);
+        log.warn("Error de validación: {}", errors);
 
         ErrorResponse response = ErrorResponse.builder()
                 .code("VALIDATION_ERROR")
@@ -48,24 +47,28 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
     }
 
-    // 3. Reglas de Negocio / Límites de Plan (400 o 409)
+    // ✅ 3. Falta parámetro requerido (@RequestParam) (400)
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponse> handleMissingParams(MissingServletRequestParameterException ex, HttpServletRequest request) {
+        return buildResponse(HttpStatus.BAD_REQUEST, "MISSING_PARAMETER", "Falta el parámetro requerido: " + ex.getParameterName(), request);
+    }
+
+    // 4. Reglas de Negocio (400)
     @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class})
     public ResponseEntity<ErrorResponse> handleBusinessRules(RuntimeException ex, HttpServletRequest request) {
-        log.warn("Regla de negocio violada: {}", ex.getMessage());
         return buildResponse(HttpStatus.BAD_REQUEST, "BUSINESS_RULE_VIOLATION", ex.getMessage(), request);
     }
 
-    // 4. Seguridad: Sesión inválida o Permisos insuficientes (401 / 403)
+    // 5. Seguridad (403)
     @ExceptionHandler({SecurityException.class, AccessDeniedException.class})
     public ResponseEntity<ErrorResponse> handleSecurity(RuntimeException ex, HttpServletRequest request) {
-        log.error("Intento de acceso no autorizado: {}", ex.getMessage());
         return buildResponse(HttpStatus.FORBIDDEN, "ACCESS_DENIED", ex.getMessage(), request);
     }
 
-    // 5. Catch-All: Error interno inesperado (500)
+    // 6. Catch-All (500)
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleGeneral(Exception ex, HttpServletRequest request) {
-        log.error("Error interno no controlado: ", ex); // Imprimimos stack trace aquí
+        log.error("Error interno no controlado: ", ex);
         return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "Ha ocurrido un error inesperado. Contacte soporte.", request);
     }
 

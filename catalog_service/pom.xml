@@ -247,6 +247,7 @@
                         <exclude>**/enums/**</exclude>
                         <exclude>**/config/**</exclude>
                         <exclude>**/*Application.*</exclude>
+                        <exclude>**/event/**</exclude>
                         <exclude>**/exception/**</exclude>
                     </excludes>
                 </configuration>
